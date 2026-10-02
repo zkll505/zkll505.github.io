@@ -98,8 +98,69 @@ def execute():
     assert "1 failed" in o.getvalue()
 
 
+def hints():
+    src = ("import os\nimport math\ndef f(a, items=[]):\n    unused = 1\n    return a\n    print('x')\n"
+           "def g():\n    pass\nx = g()\nlist = [1]\nx == 3\nprint(y)\ny = 2\nf\nfor i in range(3):\n    t = t + i\n")
+    h = json.loads(runner.analyze(src))["hints"]
+    by = {x["line"]: x["msg"] for x in h}
+    assert by[1].startswith("'os' isn't available") and 2 not in by
+    assert "shared by every call" in by[3]
+    assert "never used" in by[4] and "can never run" in by[6]
+    assert "no return statement" in by[9] and "built-in" in by[10] and "comparison" in by[11]
+    assert "before it has been given a value" in by[12] and "does nothing" in by[14]
+    assert "before it has been given a value" in by[16]
+    ok = json.loads(runner.analyze(SRC, json.dumps(["helpers"])))["hints"]
+    assert ok == [], ok  # the starter-style program is clean
+    assert json.loads(runner.analyze("def f(:\n"))["line"] == 1
+
+
+def timeline():
+    files = json.dumps({"main.py": SRC, "helpers.py": HELPERS})
+    with contextlib.redirect_stdout(io.StringIO()):
+        res = json.loads(runner.run(files, "main.py"))
+    tl, agg = res["timeline"], res["files"]
+    assert tl["files"] == ["main.py", "helpers.py"] and not tl["trunc"]
+    n = len(tl["steps"]) // 2
+    assert n == sum(sum(f["hits"].values()) for f in agg.values())
+    last = {}  # replaying every fact gives the same final values as the aggregate
+    for idx, f, kind, line, data in tl["facts"]:
+        assert 0 <= idx <= n
+        if kind == "v":
+            last.setdefault((tl["files"][f], str(line)), {}).update(data)
+    for (name, line), vals in last.items():
+        assert agg[name]["vals"][line] == vals
+    assert any(k == "p" for _, _, k, _, _ in tl["facts"]) and any(k == "r" for _, _, k, _, _ in tl["facts"])
+
+
+def input_and_errors():
+    prog = json.dumps({"a.py": 'import random\nn = input("Name? ")\nprint("hi", n, random.randint(1, 10**9))\n'})
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        r = json.loads(runner.run(prog, "a.py", "run", "[]", 7))
+    assert r["need_input"] and o.getvalue() == "Name? ", o.getvalue()
+    outs = []
+    for _ in range(2):  # same seed + same answers -> identical output
+        with contextlib.redirect_stdout(io.StringIO()) as o:
+            r = json.loads(runner.run(prog, "a.py", "run", '["Bo"]', 7))
+        outs.append(o.getvalue())
+    assert not r["need_input"] and outs[0] == outs[1] and outs[0].startswith("Name? Bo\nhi Bo "), outs
+    with contextlib.redirect_stderr(io.StringIO()):
+        e = json.loads(runner.run(json.dumps({"a.py": "x = 1\ndef f():\n    return 1 / 0\nf()\n"}), "a.py"))["error"]
+        assert (e["file"], e["line"]) == ("a.py", 3) and "ZeroDivisionError" in e["msg"], e
+        e = json.loads(runner.run(json.dumps({"a.py": "x = (\n"}), "a.py"))["error"]
+        assert e["file"] == "a.py" and "SyntaxError" in e["msg"], e
+        e = json.loads(runner.run(json.dumps({"a.py": "while True:\n    pass\n"}), "a.py"))["error"]
+        assert e["line"] in (1, 2) and "infinite loop" in e["msg"], e   # the line it was on when cut off
+    runner.OUTLIM = 50
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as se:
+        runner.run(json.dumps({"a.py": "while True:\n    print('spam spam spam')\n"}), "a.py")
+    assert "characters of output" in se.getvalue()
+
+
 if __name__ == "__main__":
     runner.LIMIT = 20_000
     analyze()
     execute()
+    hints()
+    timeline()
+    input_and_errors()
     print("ok")

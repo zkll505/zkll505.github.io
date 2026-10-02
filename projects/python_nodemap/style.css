@@ -1,72 +1,109 @@
-/* VS Code "Dark+" look */
+/* VS Code "Dark+" / "Light+" look. The node map panel stays dark in both themes (it is a canvas). */
+body {
+  --bg: #1e1e1e; --side: #252526; --bar: #3c3c3c; --tab: #2d2d2d; --text: #ccc; --dim: #969696; --line: #2b2b2b;
+  --hover: #2a2d2e; --sel: #37373d; --btn: #4a4a4a; --btn-h: #5a5a5a; --btn-t: #fff; --input: #3c3c3c; --fs: 14px;
+}
+body.light {
+  --bg: #fff; --side: #f3f3f3; --bar: #dcdcdc; --tab: #ececec; --text: #333; --dim: #6e6e6e; --line: #d4d4d4;
+  --hover: #e8e8e8; --sel: #e4e6f1; --btn: #c9c9c9; --btn-h: #b8b8b8; --btn-t: #222; --input: #fff;
+}
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
   margin: 0; display: flex; flex-direction: column; overflow: hidden;
-  background: #1e1e1e; color: #ccc; font: 13px "Segoe UI", system-ui, sans-serif;
+  background: var(--bg); color: var(--text); font: 13px "Segoe UI", system-ui, sans-serif;
 }
-button {
-  background: #0e639c; color: #fff; border: 0; border-radius: 2px; padding: 4px 12px; font: inherit; cursor: pointer;
-}
-button:hover { background: #1177bb; }
+button { background: var(--btn); color: var(--btn-t); border: 0; border-radius: 2px; padding: 4px 12px; font: inherit; cursor: pointer; }
+button:hover { background: var(--btn-h); }
+button:disabled { opacity: .45; cursor: default; }
+button.pri { background: #0e639c; color: #fff; }
+button.pri:hover:not(:disabled) { background: #1177bb; }
+button.stop { background: #c42b1c; color: #fff; }
+button.stop:hover { background: #d93a2b; }
+button[hidden] { display: none; }
+input { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--line); border-radius: 2px; padding: 3px 8px; }
+input:focus { outline: 1px solid #0078d4; border-color: transparent; }
 .sp { flex: 1; }
 
-#bar { height: 35px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: #3c3c3c; }
+#bar { height: 35px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--bar); }
 .brand { font-weight: 600; margin-right: 12px; }
-#imp, #exp { background: #4a4a4a; }
-#imp:hover, #exp:hover { background: #5a5a5a; }
 
 .h {
   height: 28px; flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 0 10px; font-size: 11px; letter-spacing: .05em; color: #bbb; text-transform: uppercase;
+  padding: 0 10px; font-size: 11px; letter-spacing: .05em; color: var(--dim); text-transform: uppercase;
 }
-.h button { padding: 0 8px; background: transparent; color: #ccc; font-size: 14px; line-height: 20px; }
-.h button:hover { background: #3c3c3c; }
+.h button { padding: 0 8px; background: transparent; color: var(--text); font-size: 14px; line-height: 20px; }
+.h button:hover { background: var(--hover); }
 
 #work { flex: 1; min-height: 0; display: flex; }
-#side { width: 190px; flex: none; display: flex; flex-direction: column; background: #252526; }
+#side { width: 190px; flex: none; display: flex; flex-direction: column; background: var(--side); }
 #files { list-style: none; margin: 0; padding: 0; overflow: auto; }
 #files li { display: flex; align-items: center; gap: 4px; padding: 3px 10px 3px 18px; cursor: pointer; }
-#files li:hover { background: #2a2d2e; }
-#files li.on { background: #37373d; color: #fff; }
+#files li:hover { background: var(--hover); }
+#files li.on { background: var(--sel); }
 #files li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #files li i { font-style: normal; opacity: 0; padding: 0 3px; }
 #files li:hover i { opacity: .7; }
 #files li i:hover { opacity: 1; }
 
 #edit { flex: 1; min-width: 160px; display: flex; flex-direction: column; min-height: 0; }
-#tabs { height: 35px; flex: none; display: flex; overflow-x: auto; background: #252526; }
-.tab { display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; cursor: pointer; white-space: nowrap; background: #2d2d2d; color: #969696; border-right: 1px solid #252526; border-top: 1px solid transparent; }
-.tab.on { background: #1e1e1e; color: #fff; border-top-color: #0078d4; }
+#tabs { height: 35px; flex: none; display: flex; overflow-x: auto; background: var(--side); }
+.tab { display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; cursor: pointer; white-space: nowrap; background: var(--tab); color: var(--dim); border-right: 1px solid var(--side); border-top: 1px solid transparent; }
+.tab.on { background: var(--bg); color: var(--text); border-top-color: #0078d4; }
 .tab b { font-weight: 400; opacity: 0; padding: 0 3px; border-radius: 3px; }
 .tab:hover b, .tab.on b { opacity: .8; }
-.tab b:hover { background: #3c3c3c; opacity: 1; }
+.tab b:hover { background: var(--hover); opacity: 1; }
 #cm { flex: 1; min-height: 0; }
 
-.split { flex: none; background: #2b2b2b; touch-action: none; }
+.split { flex: none; background: var(--line); touch-action: none; }
 .split:hover { background: #0078d4; }
 #vsplit { width: 4px; cursor: col-resize; }
 #hsplit { height: 4px; cursor: row-resize; }
 
+/* node map panel */
 #mapp { width: var(--map-w, 600px); flex: none; display: flex; flex-direction: column; min-width: 0; background: #10141b; }
-#mapp .h { background: #1e1e1e; justify-content: flex-start; }
-#mapname { color: #fff; text-transform: none; }
+#mapp .h { background: var(--bg); justify-content: flex-start; }
+#mapname { color: var(--text); text-transform: none; }
 #maperr { color: #f48771; text-transform: none; letter-spacing: 0; }
+.bar2, #steps { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 5px 10px; background: var(--side); border-bottom: 1px solid var(--line); }
+.bar2 #q { width: 150px; padding: 2px 8px; }
+.grp { display: inline-flex; gap: 1px; }
+.grp button { border-radius: 0; padding: 2px 8px; font-size: 12px; }
+.grp button:first-child { border-radius: 3px 0 0 3px; }
+.grp button:last-child { border-radius: 0 3px 3px 0; }
+.grp .ic { min-width: 26px; padding: 2px 6px; }
+.tg[aria-pressed="true"] { background: #0e639c; color: #fff; }
+#steps[hidden] { display: none; }
+#steps .ic { padding: 2px 8px; border-radius: 3px; }
+#s-range { flex: 1; min-width: 120px; padding: 0; accent-color: #ffd866; }
+#s-label { font-size: 12px; color: var(--dim); min-width: 150px; }
 #map { flex: 1; overflow: auto; }
 #map svg { display: block; }
 .empty { padding: 24px; color: #7b86a8; }
+/* wire filters (CSS only, so the layout doesn't jump) */
+#map.no-data .wire.data:not(.back), #map.no-call .wire.call, #map.no-back .wire.back { display: none; }
+#map.only svg.f .wire:not(.on) { display: none; }
 
-#con { height: var(--con-h, 190px); flex: none; display: flex; flex-direction: column; background: #1e1e1e; }
-#con .h { border-bottom: 1px solid #2b2b2b; }
-#out { flex: 1; margin: 0; padding: 6px 14px; overflow: auto; white-space: pre-wrap; font: 13px Consolas, "Cascadia Mono", "Courier New", monospace; color: #ccc; }
+/* console */
+#con { height: var(--con-h, 190px); flex: none; display: flex; flex-direction: column; background: var(--bg); }
+#con .h { border-bottom: 1px solid var(--line); }
+#out { flex: 1; margin: 0; padding: 6px 14px; overflow: auto; white-space: pre-wrap; font: 13px Consolas, "Cascadia Mono", "Courier New", monospace; color: var(--text); }
 #out .err { color: #f48771; }
 #out .dim { color: #6a737d; }
 #out a { color: #4fc1ff; text-decoration: underline; cursor: pointer; }
+body.light #out .err { color: #cd3131; }
+body.light #out a { color: #0066bf; }
+#inrow { flex: none; display: flex; align-items: center; gap: 8px; padding: 5px 14px; border-top: 1px solid var(--line); background: var(--side); }
+#inrow[hidden] { display: none; }
+#inrow span { color: #ffd866; font-family: Consolas, monospace; }
+#inrow input { flex: 1; font-family: Consolas, "Cascadia Mono", monospace; }
 
 #status { height: 22px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 10px; background: #007acc; color: #fff; font-size: 12px; }
+#probs { cursor: default; }
+#probs:empty { display: none; }
 
-/* CodeMirror 5 as VS Code Dark+ */
-.CodeMirror { height: 100%; font: 14px/1.5 Consolas, "Cascadia Mono", "Courier New", monospace; }
+/* CodeMirror 5 as VS Code Dark+ / Light+ */
+.CodeMirror { height: 100%; font: var(--fs)/1.5 Consolas, "Cascadia Mono", "Courier New", monospace; }
 .cm-s-vscode.CodeMirror { background: #1e1e1e; color: #d4d4d4; }
 .cm-s-vscode .CodeMirror-gutters { background: #1e1e1e; border: 0; }
 .cm-s-vscode .CodeMirror-linenumber { color: #858585; }
@@ -76,14 +113,48 @@ button:hover { background: #1177bb; }
 .cm-s-vscode .CodeMirror-selected, .cm-s-vscode.CodeMirror-focused .CodeMirror-selected { background: #264f78; }
 .cm-s-vscode .CodeMirror-matchingbracket { color: inherit !important; outline: 1px solid #888; }
 .cm-s-vscode .cm-keyword { color: #c586c0; }
-.cm-s-vscode .cm-atom, .cm-s-vscode .cm-builtin { color: #569cd6; }
-.cm-s-vscode .cm-builtin { color: #dcdcaa; }
-.cm-s-vscode .cm-def { color: #dcdcaa; }
-.cm-s-vscode .cm-variable, .cm-s-vscode .cm-variable-2 { color: #9cdcfe; }
+.cm-s-vscode .cm-atom { color: #569cd6; }
+.cm-s-vscode .cm-builtin, .cm-s-vscode .cm-def, .cm-s-vscode .cm-meta { color: #dcdcaa; }
+.cm-s-vscode .cm-variable, .cm-s-vscode .cm-variable-2, .cm-s-vscode .cm-property { color: #9cdcfe; }
 .cm-s-vscode .cm-variable-3, .cm-s-vscode .cm-type { color: #4ec9b0; }
-.cm-s-vscode .cm-property { color: #9cdcfe; }
 .cm-s-vscode .cm-number { color: #b5cea8; }
 .cm-s-vscode .cm-string, .cm-s-vscode .cm-string-2 { color: #ce9178; }
 .cm-s-vscode .cm-comment { color: #6a9955; }
-.cm-s-vscode .cm-meta { color: #dcdcaa; }
 .cm-s-vscode .cm-operator { color: #d4d4d4; }
+
+.cm-s-vscode-light.CodeMirror { background: #fff; color: #000; }
+.cm-s-vscode-light .CodeMirror-gutters { background: #fff; border: 0; }
+.cm-s-vscode-light .CodeMirror-linenumber { color: #237893; }
+.cm-s-vscode-light .CodeMirror-activeline-background { background: #f2f2f2; }
+.cm-s-vscode-light .CodeMirror-cursor { border-left: 2px solid #000; }
+.cm-s-vscode-light .CodeMirror-selected, .cm-s-vscode-light.CodeMirror-focused .CodeMirror-selected { background: #add6ff; }
+.cm-s-vscode-light .CodeMirror-matchingbracket { color: inherit !important; outline: 1px solid #aaa; }
+.cm-s-vscode-light .cm-keyword { color: #af00db; }
+.cm-s-vscode-light .cm-atom { color: #0000ff; }
+.cm-s-vscode-light .cm-builtin, .cm-s-vscode-light .cm-def, .cm-s-vscode-light .cm-meta { color: #795e26; }
+.cm-s-vscode-light .cm-variable, .cm-s-vscode-light .cm-variable-2, .cm-s-vscode-light .cm-property { color: #001080; }
+.cm-s-vscode-light .cm-variable-3, .cm-s-vscode-light .cm-type { color: #267f99; }
+.cm-s-vscode-light .cm-number { color: #098658; }
+.cm-s-vscode-light .cm-string, .cm-s-vscode-light .cm-string-2 { color: #a31515; }
+.cm-s-vscode-light .cm-comment { color: #008000; }
+.cm-s-vscode-light .cm-operator { color: #000; }
+
+/* editor overlays: run position, error, lint */
+.cm-now { background: rgba(255, 216, 102, .22) !important; }
+.cm-err { background: rgba(244, 71, 71, .2) !important; }
+.err-widget { margin: 2px 0 4px; padding: 2px 10px; border-left: 3px solid #f14c4c; background: rgba(244, 71, 71, .12); color: #f48771; font: 12px Consolas, "Cascadia Mono", monospace; }
+body.light .err-widget { color: #cd3131; }
+.lint-warn { text-decoration: underline wavy #cca700; text-underline-offset: 3px; }
+.lint-error { text-decoration: underline wavy #f14c4c; text-underline-offset: 3px; }
+.CodeMirror-gutter.lint { width: 16px; }
+.lint-dot { width: 9px; height: 9px; margin: 6px 0 0 4px; border-radius: 50%; background: #cca700; }
+.lint-dot.error { background: #f14c4c; }
+
+/* editor popups: autocomplete, find/replace */
+.CodeMirror-hints { background: var(--side); border: 1px solid var(--line); box-shadow: 0 2px 8px rgba(0, 0, 0, .4); font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; z-index: 50; }
+.CodeMirror-hint { color: var(--text); padding: 1px 8px; }
+li.CodeMirror-hint-active { background: #094771; color: #fff; }
+.CodeMirror-dialog { background: var(--side); color: var(--text); border-bottom: 1px solid var(--line); padding: 4px 10px; }
+.CodeMirror-dialog input { color: var(--text); background: var(--input); border: 1px solid var(--line); font-family: Consolas, monospace; }
+.CodeMirror-dialog button { font-size: 12px; }
+.cm-searching { background: rgba(255, 213, 0, .35); }

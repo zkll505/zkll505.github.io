@@ -1,20 +1,21 @@
 /* Python backend for the node map, kept as a JS string so the page also works when opened straight from disk (file://),
-   where the browser blocks fetch(). app.js runs it inside Pyodide. test_runner.py extracts and tests it. */
-const RUNNER_PY = String.raw`"""Backend for the node map. Loaded into Pyodide by app.js.
+   where the browser blocks fetch(). worker.js runs it inside Pyodide. test_runner.py extracts and tests it. */
+const RUNNER_PY = String.raw`"""Backend for the node map. Runs inside Pyodide in a Web Worker (see worker.js).
 
-analyze(src)               -> JSON {nodes, wires}: one node per statement, wires = data flow between them
-run(files_json, main, mode) -> JSON trace: variable values / hit counts per line, from sys.settrace
+analyze(src, mods_json)  -> JSON {nodes, wires, hints}: one node per statement, wires = data flow, hints = beginner lint
+run(files_json, main, mode, answers_json, seed)
+                         -> JSON {files, timeline, error, need_input}: values / hit counts per line plus a step timeline,
+                            recorded with sys.settrace
 """
-import ast, builtins, doctest, importlib, json, os, re, shutil, sys, tempfile, traceback, types
-
-try:
-    import js  # input() is a browser prompt
-except ImportError:
-    js = None
+import ast, builtins, doctest, importlib, json, os, random, re, shutil, sys, tempfile, traceback, types
 
 ALLOWED = ("random", "math", "time", "doctest")
 MUTATORS = {"append", "extend", "insert", "remove", "pop", "clear", "sort", "reverse", "update", "add", "discard", "setdefault", "popitem"}
+SHADOW = {"list", "dict", "set", "str", "int", "float", "sum", "max", "min", "len", "input", "print", "range", "type", "id", "sorted",
+          "abs", "round", "all", "any", "map", "filter", "zip", "open", "next", "iter", "format", "tuple", "bool", "object", "chr", "ord"}
 LIMIT = 1_500_000  # traced lines before we assume an infinite loop
+MAXSTEPS, MAXFACTS = 30_000, 120_000  # timeline size caps
+OUTLIM = 400_000  # characters of output
 FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
 KIND = {ast.FunctionDef: "def", ast.AsyncFunctionDef: "def", ast.ClassDef: "class", ast.For: "for", ast.AsyncFor: "for",
         ast.While: "while", ast.If: "if", ast.Try: "try", ast.ExceptHandler: "except", ast.With: "with", ast.AsyncWith: "with",
@@ -82,14 +83,18 @@ def scan(exprs, me, methods):
     return list(uses), list(defs), calls
 
 
-def analyze(src):
+def analyze(src, mods_json="[]"):
+    mods = set(json.loads(mods_json))  # names of the project's other files (importable)
     try:
         tree = ast.parse(src)
     except SyntaxError as e:
-        return json.dumps({"error": f"line {e.lineno}: {e.msg}"})
+        return json.dumps({"error": f"line {e.lineno}: {e.msg}", "line": e.lineno or 1, "msg": e.msg})
     lines = src.splitlines()
     methods = {f.name for c in ast.walk(tree) if isinstance(c, ast.ClassDef) for f in c.body if isinstance(f, FUNCS)}
-    nodes, tabs, glob, rets, by_method, init = [], {}, {}, set(), {}, {}  # tabs[scope][name] = ids of defining nodes
+    nodes, tabs, glob, rets, gens, by_method, init, hints = [], {}, {}, set(), set(), {}, {}, []  # tabs[scope][name] = ids of defining nodes
+
+    def hint(line, msg, kind="warn"):
+        hints.append({"line": line, "msg": msg, "kind": kind})
 
     def reg(scope, name, nid, cls):
         scope = cls if "." in name and cls is not None else -1 if name in glob.get(scope, ()) else scope
@@ -104,8 +109,27 @@ def analyze(src):
         return n
 
     def build(stmts, parent, scope, me, cls):
-        for s in stmts:
+        for i, s in enumerate(stmts):
             visit(s, parent, scope, me, cls)
+            if isinstance(s, (ast.Return, ast.Break, ast.Continue, ast.Raise)) and i + 1 < len(stmts):
+                hint(stmts[i + 1].lineno, f"This line can never run: it comes right after a {type(s).__name__.lower()}.")
+
+    def lint(s, t, ex_defs):
+        if t in (ast.Import, ast.ImportFrom):
+            tops = [a.name.split(".")[0] for a in s.names] if t is ast.Import else [] if s.level else [(s.module or "").split(".")[0]]
+            for top in tops:
+                if top not in ALLOWED and top not in mods:
+                    hint(s.lineno, f"'{top}' isn't available here. You can import: " + ", ".join(ALLOWED + tuple(sorted(mods))), "error")
+        elif t is ast.Expr and isinstance(s.value, (ast.Name, ast.Attribute)):
+            hint(s.lineno, f"'{ast.unparse(s.value)}' on its own does nothing. To call a function add (), to show a value use print().")
+        elif t is ast.Expr and isinstance(s.value, ast.Compare):
+            hint(s.lineno, "The result of this comparison is thrown away. Did you mean = to assign a value?")
+        elif t in FUNCS and any(isinstance(d, (ast.List, ast.Dict, ast.Set)) for d in s.args.defaults + [d for d in s.args.kw_defaults if d]):
+            hint(s.lineno, "A list/dict/set default value is shared by every call. Use None and create it inside the function.")
+        if t not in (ast.Import, ast.ImportFrom):
+            for d in ex_defs:
+                if d in SHADOW:
+                    hint(s.lineno, f"'{d}' is already a built-in Python name. Reusing it hides the built-in, so pick another name.")
 
     def visit(s, parent, scope, me, cls):
         t = type(s)
@@ -119,11 +143,14 @@ def analyze(src):
         if t is ast.AugAssign and isinstance(s.target, ast.Name):
             uses.append(s.target.id)
         defs = list(dict.fromkeys(defs + edefs))
+        lint(s, t, set(defs) | set(show or []) if t in FUNCS else defs if "Assign" in t.__name__ or t in (ast.For, ast.AsyncFor) else [])
         first = min([d.lineno for d in getattr(s, "decorator_list", [])] + [s.lineno])
         kind = KIND.get(t, "assign" if "Assign" in t.__name__ else "other")
         n = add(kind, first, s.end_lineno, lines[s.lineno - 1].strip(), parent, scope, cls,
                 name=getattr(s, "name", None))
         n.update(uses=uses, calls=calls, show=defs if show is None else show)
+        if t is ast.Assign and isinstance(s.value, ast.Call) and isinstance(s.value.func, ast.Name):
+            n["rcall"] = s.value.func.id
         for d in defs:
             reg(scope, d, n["id"], cls)
         if t is ast.Return and s.value is not None and scope != -1 and nodes[scope]["kind"] == "def":
@@ -131,6 +158,8 @@ def analyze(src):
         inner, me2, cls2 = scope, me, cls
         if t in FUNCS:
             inner = n["id"]
+            if any(isinstance(m, (ast.Yield, ast.YieldFrom)) for m in ast.walk(s)):
+                gens.add(inner)
             for p in params(s.args):
                 reg(inner, p, inner, None)
             if scope != -1 and nodes[scope]["kind"] == "class":
@@ -225,12 +254,47 @@ def analyze(src):
             if name not in called:
                 for i in sources(n, name):
                     wire(i, n["id"], "data", name, back=i > n["id"])
-    return json.dumps({"nodes": [{k: n[k] for k in OUT} for n in nodes], "wires": list(wires.values())})
+
+    # beginner hints that need the definition tables
+    for n in nodes:
+        if n.get("rcall"):
+            for i in sources(n, n["rcall"]):
+                if nodes[i]["kind"] == "def" and i not in rets and i not in gens:
+                    hint(n["line"], f"{n['rcall']}() has no return statement, so this assigns None. Add 'return <value>' to the function.")
+        sc = n["scope"]
+        if sc == -1 or nodes[sc]["kind"] == "def":
+            for name in n["uses"]:
+                ids = tabs.get(sc, {}).get(name)
+                if "." in name or not ids or name in glob.get(sc, ()):
+                    continue
+                lp = loop_of(n)
+                if not [i for i in ids if i < n["id"]] and not (lp and any(n["id"] < i <= lp["last"] for i in ids)):
+                    hint(n["line"], f"'{name}' is used here before it has been given a value.")
+    for f in nodes:
+        if f["kind"] != "def":
+            continue
+        used = {u for m in nodes[f["id"] + 1: f["last"] + 1] for u in m["uses"]}
+        for name, ids in tabs.get(f["id"], {}).items():
+            if "." in name or name.startswith("_") or f["id"] in ids or name in used:
+                continue
+            if nodes[ids[0]]["kind"] == "assign":
+                hint(nodes[ids[0]]["line"], f"'{name}' is given a value but never used.")
+
+    hints = sorted({(h["line"], h["msg"]): h for h in hints}.values(), key=lambda h: h["line"])
+    return json.dumps({"nodes": [{k: n[k] for k in OUT} for n in nodes], "wires": list(wires.values()), "hints": hints})
 
 
 # ---------------------------------------------------------------- running
 
 class StepLimit(BaseException):
+    pass
+
+
+class OutputLimit(BaseException):
+    pass
+
+
+class NeedInput(BaseException):  # input() with no queued answer: the page asks the user, then re-runs with the answers
     pass
 
 
@@ -247,9 +311,11 @@ def short(v, n=40, d=0):
 
 
 def snap(frame, names, store, key):
+    """Record the current value of 'names' under store[key]; returns what was recorded."""
+    got = {}
     if not names:
-        return
-    loc, got = frame.f_locals, {}
+        return got
+    loc = frame.f_locals
     for nm in names:
         try:
             base, _, attr = nm.partition(".")
@@ -259,14 +325,19 @@ def snap(frame, names, store, key):
             pass
     if got:
         store.setdefault(key, {}).update(got)
+    return got
 
 
-def run(files_json, main, mode="run"):
+def run(files_json, main, mode="run", answers_json="[]", seed=0):
     """Run 'main' (as __main__, or as a module + doctest.testmod when mode == 'doctest') with line tracing."""
-    files = json.loads(files_json)
+    files, answers = json.loads(files_json), json.loads(answers_json)
+    random.seed(seed)  # same seed on every re-run, so replaying input() answers repeats the same random numbers
     root = tempfile.mkdtemp()
     mods = {n[:-3] for n in files if n.endswith(".py")}
+    names = list(files)
+    fid = {n: i for i, n in enumerate(names)}
     info, T, step = {}, {}, [0]
+    steps, facts, over, cur, outn, outover = [], [], [False], [None, 0], [0], [False]  # timeline: steps = [file, line, ...]
     for name, src in files.items():
         path = os.path.join(root, name)
         with open(path, "w", encoding="utf-8") as f:
@@ -279,32 +350,48 @@ def run(files_json, main, mode="run"):
         info[path] = (name, defs, prm)
         T[name] = {"vals": {}, "hits": {}, "calls": {}, "rets": {}, "params": {}}
 
+    def fact(name, kind, line, data):  # something that became known right before step number len(steps)/2
+        if len(steps) < 2 * MAXSTEPS and len(facts) < MAXFACTS:
+            facts.append([len(steps) // 2, fid[name], kind, line, data])
+
     def trace(frame, event, arg):
         co = frame.f_code
         i = info.get(co.co_filename)
         if i is None:
             return None  # stdlib etc: don't trace
         name, defs, prm = i
-        t, k, last = T[name], co.co_firstlineno, [0]
+        t, k, last, fi = T[name], co.co_firstlineno, [0], fid[name]
         if co.co_name != "<module>":
             t["calls"][k] = t["calls"].get(k, 0) + 1
-            snap(frame, prm.get(k), t["params"], k)
+            fact(name, "p", k, snap(frame, prm.get(k), t["params"], k))
 
         def local(frame, event, arg):
             ln = last[0]
             if event == "line":
                 if ln:
-                    snap(frame, defs.get(ln), t["vals"], ln)  # values after the previous line ran
+                    g = snap(frame, defs.get(ln), t["vals"], ln)  # values after the previous line ran
+                    if g:
+                        fact(name, "v", ln, g)
                 last[0] = ln = frame.f_lineno
+                cur[0], cur[1] = name, ln
                 t["hits"][ln] = t["hits"].get(ln, 0) + 1
+                if len(steps) < 2 * MAXSTEPS:
+                    steps.append(fi)
+                    steps.append(ln)
+                else:
+                    over[0] = True
                 step[0] += 1
                 if step[0] > LIMIT:
                     raise StepLimit(f"Stopped after {LIMIT:,} lines - is there an infinite loop?")
             elif event == "return":
                 if ln:
-                    snap(frame, defs.get(ln), t["vals"], ln)
+                    g = snap(frame, defs.get(ln), t["vals"], ln)
+                    if g:
+                        fact(name, "v", ln, g)
                 if arg is not None:
-                    t["rets"][ln] = t["rets"][k] = short(arg)
+                    v = t["rets"][ln] = t["rets"][k] = short(arg)
+                    fact(name, "r", ln, v)
+                    fact(name, "r", k, v)
             return local
 
         return local
@@ -322,20 +409,21 @@ def run(files_json, main, mode="run"):
     def ui_input(msg=""):
         sys.stdout.write(str(msg))
         sys.stdout.flush()
-        try:
-            v = js.prompt(str(msg))
-        except Exception:
-            raise EOFError("input() needs the browser's prompt dialog, which is blocked here") from None
-        if v is None:
-            raise EOFError("input cancelled")
+        if not answers:
+            raise NeedInput(str(msg))
+        v = str(answers.pop(0))
         sys.stdout.write(v + "\n")
         return v
 
-    class Scrub:  # hides the temp folder in anything printed (tracebacks, doctest reports)
+    class Scrub:  # hides the temp folder in anything printed (tracebacks, doctest reports) and caps the output
         def __init__(self, f):
             self.f = f
 
         def write(self, s):
+            outn[0] += len(s)
+            if outn[0] > OUTLIM and not outover[0]:
+                outover[0] = True
+                raise OutputLimit(f"Stopped: more than {OUTLIM:,} characters of output.")
             return self.f.write(s.replace(root + os.sep, "").replace(root + "/", ""))
 
         def __getattr__(self, k):
@@ -345,6 +433,14 @@ def run(files_json, main, mode="run"):
         te = traceback.TracebackException.from_exception(e)
         te.stack = traceback.StackSummary.from_list([f for f in te.stack if f.filename != fail.__code__.co_filename])  # hide runner frames
         sys.stderr.write("".join(te.format()))
+        loc = None
+        for fr, ln in traceback.walk_tb(e.__traceback__):
+            if fr.f_code.co_filename in info:
+                loc = (info[fr.f_code.co_filename][0], ln)
+        if isinstance(e, SyntaxError) and e.filename in info:
+            loc = (info[e.filename][0], e.lineno or 1)
+        msg = "".join(traceback.format_exception_only(type(e), e)).strip().splitlines()[-1]
+        return {"file": loc[0], "line": loc[1], "msg": msg} if loc else None
 
     saved = (sys.modules.get("__main__"), sys.path[:], os.getcwd(), sys.stdout, sys.stderr)
     for m in mods:
@@ -354,6 +450,7 @@ def run(files_json, main, mode="run"):
     sys.path.insert(0, root)
     os.chdir(root)
     importlib.invalidate_caches()
+    err, need = None, False
     try:
         path = os.path.join(root, main)
         mod = types.ModuleType("__main__" if mode == "run" else main[:-3])
@@ -364,12 +461,15 @@ def run(files_json, main, mode="run"):
         if mode == "doctest":
             r = doctest.testmod(mod, verbose=False)
             print(f"doctest: {r.attempted} run, {r.failed} failed" if r.attempted else "doctest: no >>> examples found in docstrings")
-    except StepLimit as e:
+    except (StepLimit, OutputLimit) as e:
         sys.stderr.write(f"{e}\n")
+        err = {"file": cur[0], "line": cur[1], "msg": str(e)} if cur[0] else None
+    except NeedInput:
+        need = True
     except SystemExit:
         pass
     except BaseException as e:
-        fail(e)
+        err = fail(e)
     finally:
         sys.settrace(None)
         builtins.__import__, builtins.input = real_import, real_input
@@ -381,5 +481,6 @@ def run(files_json, main, mode="run"):
         if saved[0]:
             sys.modules["__main__"] = saved[0]
         shutil.rmtree(root, ignore_errors=True)
-    return json.dumps({"files": T})
+    return json.dumps({"files": T, "error": err, "need_input": need,
+                       "timeline": {"files": names, "steps": steps, "facts": facts, "trunc": over[0]}})
 `;
