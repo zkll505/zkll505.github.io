@@ -80,6 +80,11 @@ input:focus { outline: 1px solid #0078d4; border-color: transparent; }
 #map { flex: 1; overflow: auto; }
 #map svg { display: block; }
 .empty { padding: 24px; color: #7b86a8; }
+.loading { max-width: 380px; margin: 14vh auto 0; text-align: center; }
+.loading #ptext { color: #c0caf5; font-size: 14px; }
+.pbar { height: 8px; margin: 14px 0 10px; background: #1e2633; border-radius: 4px; overflow: hidden; }
+#pbar { height: 100%; width: 0; background: linear-gradient(90deg, #0e8ee9, #4fc1ff); border-radius: 4px; transition: width .2s ease-out; }
+.loading .note { font-size: 12px; }
 /* wire filters (CSS only, so the layout doesn't jump) */
 #map.no-data .wire.data:not(.back), #map.no-call .wire.call, #map.no-back .wire.back { display: none; }
 #map.only svg.f .wire:not(.on) { display: none; }

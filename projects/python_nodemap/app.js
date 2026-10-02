@@ -2,6 +2,9 @@
 const $ = s => document.querySelector(s);
 const STORE = 'python_nodemap.v1', PREFS = 'python_nodemap.prefs';
 const PYODIDE = 'https://cdn.jsdelivr.net/pyodide/v0.29.5/full/'; // 0.29 (Python 3.13): works in classic blob workers, so also from file://
+// unpacked sizes of what Pyodide downloads (about 5 MB over the wire), used for the progress bar. Re-measure if PYODIDE changes.
+const PYODIDE_SIZES = { 'pyodide.asm.wasm': 8647684, 'python_stdlib.zip': 2424003, 'pyodide.asm.js': 1074322, 'pyodide-lock.json': 122027 };
+let ready = false; // Python finished loading
 const STOPPED = new Error('stopped');
 
 const STARTER = {
@@ -83,7 +86,7 @@ const okName = n => /^[A-Za-z_]\w*\.py$/.test(n);
 
 // ---- Python lives in a worker (worker.js + runner.js), so the page never freezes and Stop works
 const W = {
-  n: 0, pend: new Map(), onOut: () => {},
+  n: 0, pend: new Map(), onOut: () => {}, onProgress: () => {},
   call(type, data) {
     return (type === 'init' ? Promise.resolve() : W.ready).then(() => new Promise((res, rej) => {
       const id = ++W.n;
@@ -97,12 +100,13 @@ const W = {
     } catch (e) { W.ready = Promise.reject(e); return; }
     W.w.onmessage = ({ data: m }) => {
       if (m.type === 'out') return W.onOut(m.text, m.cls);
+      if (m.type === 'progress') return W.onProgress(m.loaded, m.total);
       const p = W.pend.get(m.id);
       W.pend.delete(m.id);
       if (p) m.error ? p.rej(new Error(m.error)) : p.res(m.result);
     };
     W.w.onerror = e => out(`Python worker error: ${e.message || e}\n`, 'err');
-    W.ready = W.call('init', { url: PYODIDE, runner: RUNNER_PY });
+    W.ready = W.call('init', { url: PYODIDE, runner: RUNNER_PY, sizes: PYODIDE_SIZES });
     W.ready.catch(() => {});
   },
   restart() { // Stop: killing the worker is the only way to interrupt running Python
@@ -316,6 +320,7 @@ const traceOf = file => {
 };
 const nowAt = () => (S.step == null || !S.tl ? [] : [S.tl.files[S.tl.steps[2 * S.step]], S.tl.steps[2 * S.step + 1]]);
 function draw() {
+  if (!ready) return; // the loading panel is showing
   const g = S.graph[S.active], box = $('#map');
   if (!g) { box.innerHTML = '<div class="empty">Nothing to map yet.</div>'; S.dim = null; return; }
   const [nf, nl] = nowAt();
@@ -463,9 +468,9 @@ $('#s-play').onclick = () => {
 // Python can't block waiting for input() in a worker without special server headers, so input() asks for the answer
 // and the page re-runs the program from the top, feeding it the answers collected so far (random is seeded the same).
 let job = null;
-const setRunning = on => { $('#run').disabled = $('#doctest').disabled = on; $('#stop').hidden = !on; };
+const setRunning = on => { $('#run').disabled = $('#doctest').disabled = on || !ready; $('#stop').hidden = !on; };
 async function run(mode = 'run') {
-  if (job) return;
+  if (job || !ready) return;
   stopPlay();
   S.tl = null; S.step = null; S.error = null;
   showMarks(); updateStepper(); draw();
@@ -627,8 +632,22 @@ drag($('#hsplit'), e => document.body.style.setProperty('--con-h', Math.max(60, 
 cm.swapDoc(docOf(S.active));
 chrome();
 applyPrefs();
+const setProgress = (pct, text) => {
+  if ($('#pbar')) { $('#pbar').style.width = pct + '%'; $('#ptext').textContent = `${text} ${pct < 100 ? pct + '%' : ''}`; }
+  setStatus(`Loading Python… ${pct}%`);
+};
+W.onProgress = (loaded, total) => { // download = 0-95%, then Pyodide starting up
+  if (ready) return;
+  setProgress(Math.min(95, Math.round((loaded / total) * 95)), loaded >= total ? 'Starting Python…' : 'Downloading Python…');
+};
 W.start();
-W.ready.then(() => { setStatus('Ready'); refresh(); }, e => {
+W.ready.then(() => {
+  ready = true;
+  setProgress(100, 'Analyzing your code…');
+  setRunning(false);
+  setStatus('Ready');
+  refresh();
+}, e => {
   setStatus('Python failed to load');
   $('#map').innerHTML = '<div class="empty">Could not load Python. Check your connection and reload.</div>';
   out(`Could not load Python: ${e.message || e}\nThis page needs internet access to cdn.jsdelivr.net (Pyodide) and cdnjs.cloudflare.com (editor, zip).\n`, 'err');

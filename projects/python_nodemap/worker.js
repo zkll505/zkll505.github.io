@@ -21,6 +21,21 @@ function workerMain() {
       let result;
       if (m.type === 'init') {
         importScripts(m.url + 'pyodide.js'); // classic worker: Pyodide 314+ only supports module workers, which Chrome blocks on file://
+        // Download the big files ourselves first so the page can show real progress; Pyodide then finds them in the HTTP cache.
+        const total = Object.values(m.sizes).reduce((a, b) => a + b, 0);
+        let loaded = 0, t = 0;
+        await Promise.all(Object.keys(m.sizes).map(async f => {
+          const r = await fetch(m.url + f);
+          if (!r.ok) throw new Error(`Could not download ${f} (HTTP ${r.status})`);
+          const rd = r.body.getReader();
+          for (;;) {
+            const { done, value } = await rd.read();
+            if (done) break;
+            loaded += value.length;
+            if (performance.now() - t > 80) { t = performance.now(); postMessage({ type: 'progress', loaded, total }); }
+          }
+        }));
+        postMessage({ type: 'progress', loaded: total, total });
         const py = await loadPyodide({ indexURL: m.url });
         py.setStdout(stream(''));
         py.setStderr(stream('err'));

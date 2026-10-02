@@ -12,9 +12,9 @@
 <body>
   <header id="bar">
     <span class="brand">Python Nodemap</span>
-    <button id="run" class="pri" title="Run (Ctrl+Enter)">▶ Run</button>
+    <button id="run" class="pri" title="Run (Ctrl+Enter)" disabled>▶ Run</button>
     <button id="stop" class="stop" title="Stop the running program" hidden>■ Stop</button>
-    <button id="doctest" class="pri" title="Import this file and run its doctests">✔ Doctest</button>
+    <button id="doctest" class="pri" title="Import this file and run its doctests" disabled>✔ Doctest</button>
     <span class="sp"></span>
     <button id="font-down" title="Smaller text">A−</button>
     <button id="font-up" title="Larger text">A+</button>
@@ -65,7 +65,13 @@
         <input id="s-range" type="range" min="0" max="0" value="0">
         <span id="s-label"></span>
       </div>
-      <div id="map"><div class="empty">Loading Python (about 10 MB, first visit only)…</div></div>
+      <div id="map">
+        <div class="empty loading">
+          <div id="ptext">Loading Python… 0%</div>
+          <div class="pbar"><div id="pbar"></div></div>
+          <div class="note">About 5 MB the first time; after that it loads from your browser's cache.</div>
+        </div>
+      </div>
     </section>
   </div>
 
