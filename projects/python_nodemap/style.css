@@ -1,0 +1,89 @@
+/* VS Code "Dark+" look */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; display: flex; flex-direction: column; overflow: hidden;
+  background: #1e1e1e; color: #ccc; font: 13px "Segoe UI", system-ui, sans-serif;
+}
+button {
+  background: #0e639c; color: #fff; border: 0; border-radius: 2px; padding: 4px 12px; font: inherit; cursor: pointer;
+}
+button:hover { background: #1177bb; }
+.sp { flex: 1; }
+
+#bar { height: 35px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: #3c3c3c; }
+.brand { font-weight: 600; margin-right: 12px; }
+#imp, #exp { background: #4a4a4a; }
+#imp:hover, #exp:hover { background: #5a5a5a; }
+
+.h {
+  height: 28px; flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 0 10px; font-size: 11px; letter-spacing: .05em; color: #bbb; text-transform: uppercase;
+}
+.h button { padding: 0 8px; background: transparent; color: #ccc; font-size: 14px; line-height: 20px; }
+.h button:hover { background: #3c3c3c; }
+
+#work { flex: 1; min-height: 0; display: flex; }
+#side { width: 190px; flex: none; display: flex; flex-direction: column; background: #252526; }
+#files { list-style: none; margin: 0; padding: 0; overflow: auto; }
+#files li { display: flex; align-items: center; gap: 4px; padding: 3px 10px 3px 18px; cursor: pointer; }
+#files li:hover { background: #2a2d2e; }
+#files li.on { background: #37373d; color: #fff; }
+#files li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#files li i { font-style: normal; opacity: 0; padding: 0 3px; }
+#files li:hover i { opacity: .7; }
+#files li i:hover { opacity: 1; }
+
+#edit { flex: 1; min-width: 160px; display: flex; flex-direction: column; min-height: 0; }
+#tabs { height: 35px; flex: none; display: flex; overflow-x: auto; background: #252526; }
+.tab { display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; cursor: pointer; white-space: nowrap; background: #2d2d2d; color: #969696; border-right: 1px solid #252526; border-top: 1px solid transparent; }
+.tab.on { background: #1e1e1e; color: #fff; border-top-color: #0078d4; }
+.tab b { font-weight: 400; opacity: 0; padding: 0 3px; border-radius: 3px; }
+.tab:hover b, .tab.on b { opacity: .8; }
+.tab b:hover { background: #3c3c3c; opacity: 1; }
+#cm { flex: 1; min-height: 0; }
+
+.split { flex: none; background: #2b2b2b; touch-action: none; }
+.split:hover { background: #0078d4; }
+#vsplit { width: 4px; cursor: col-resize; }
+#hsplit { height: 4px; cursor: row-resize; }
+
+#mapp { width: var(--map-w, 600px); flex: none; display: flex; flex-direction: column; min-width: 0; background: #10141b; }
+#mapp .h { background: #1e1e1e; justify-content: flex-start; }
+#mapname { color: #fff; text-transform: none; }
+#maperr { color: #f48771; text-transform: none; letter-spacing: 0; }
+#map { flex: 1; overflow: auto; }
+#map svg { display: block; }
+.empty { padding: 24px; color: #7b86a8; }
+
+#con { height: var(--con-h, 190px); flex: none; display: flex; flex-direction: column; background: #1e1e1e; }
+#con .h { border-bottom: 1px solid #2b2b2b; }
+#out { flex: 1; margin: 0; padding: 6px 14px; overflow: auto; white-space: pre-wrap; font: 13px Consolas, "Cascadia Mono", "Courier New", monospace; color: #ccc; }
+#out .err { color: #f48771; }
+#out .dim { color: #6a737d; }
+#out a { color: #4fc1ff; text-decoration: underline; cursor: pointer; }
+
+#status { height: 22px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 10px; background: #007acc; color: #fff; font-size: 12px; }
+
+/* CodeMirror 5 as VS Code Dark+ */
+.CodeMirror { height: 100%; font: 14px/1.5 Consolas, "Cascadia Mono", "Courier New", monospace; }
+.cm-s-vscode.CodeMirror { background: #1e1e1e; color: #d4d4d4; }
+.cm-s-vscode .CodeMirror-gutters { background: #1e1e1e; border: 0; }
+.cm-s-vscode .CodeMirror-linenumber { color: #858585; }
+.cm-s-vscode .CodeMirror-activeline-background { background: #282828; }
+.cm-s-vscode .CodeMirror-activeline .CodeMirror-linenumber { color: #c6c6c6; }
+.cm-s-vscode .CodeMirror-cursor { border-left: 2px solid #aeafad; }
+.cm-s-vscode .CodeMirror-selected, .cm-s-vscode.CodeMirror-focused .CodeMirror-selected { background: #264f78; }
+.cm-s-vscode .CodeMirror-matchingbracket { color: inherit !important; outline: 1px solid #888; }
+.cm-s-vscode .cm-keyword { color: #c586c0; }
+.cm-s-vscode .cm-atom, .cm-s-vscode .cm-builtin { color: #569cd6; }
+.cm-s-vscode .cm-builtin { color: #dcdcaa; }
+.cm-s-vscode .cm-def { color: #dcdcaa; }
+.cm-s-vscode .cm-variable, .cm-s-vscode .cm-variable-2 { color: #9cdcfe; }
+.cm-s-vscode .cm-variable-3, .cm-s-vscode .cm-type { color: #4ec9b0; }
+.cm-s-vscode .cm-property { color: #9cdcfe; }
+.cm-s-vscode .cm-number { color: #b5cea8; }
+.cm-s-vscode .cm-string, .cm-s-vscode .cm-string-2 { color: #ce9178; }
+.cm-s-vscode .cm-comment { color: #6a9955; }
+.cm-s-vscode .cm-meta { color: #dcdcaa; }
+.cm-s-vscode .cm-operator { color: #d4d4d4; }

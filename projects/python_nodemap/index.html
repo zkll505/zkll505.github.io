@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Python Nodemap</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="bar">
+    <span class="brand">Python Nodemap</span>
+    <button id="run" title="Run (Ctrl+Enter)">▶ Run</button>
+    <button id="doctest" title="Import this file and run its doctests">✔ Doctest</button>
+    <span class="sp"></span>
+    <button id="imp" title="Import .py files or a .zip of them">Import</button>
+    <button id="exp" title="Download a .zip of every file plus a PNG of each node map">Export</button>
+    <input id="pick" type="file" accept=".zip,.py" multiple hidden>
+  </header>
+
+  <div id="work">
+    <aside id="side">
+      <div class="h">EXPLORER <button id="new" title="New file">+</button></div>
+      <ul id="files"></ul>
+    </aside>
+    <section id="edit">
+      <div id="tabs"></div>
+      <div id="cm"></div>
+    </section>
+    <div id="vsplit" class="split"></div>
+    <section id="mapp">
+      <div class="h">NODE MAP <span id="mapname"></span><span id="maperr"></span></div>
+      <div id="map"><div class="empty">Loading Python (about 10 MB, first visit only)…</div></div>
+    </section>
+  </div>
+
+  <div id="hsplit" class="split"></div>
+  <section id="con">
+    <div class="h">CONSOLE <button id="clear">Clear</button></div>
+    <pre id="out"></pre>
+  </section>
+
+  <footer id="status">
+    <span id="st">Loading Python…</span>
+    <span class="sp"></span>
+    <span id="pos"></span>
+    <span>Python · random, math, time, doctest</span>
+  </footer>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/comment/comment.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.js"></script>
+  <script src="runner.js"></script>
+  <script src="nodemap.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
