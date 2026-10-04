@@ -4,12 +4,17 @@ const RUNNER_PY = String.raw`"""Backend for the node map. Runs inside Pyodide in
 
 analyze(src, mods_json)  -> JSON {nodes, wires, hints}: one node per statement, wires = data flow, hints = beginner lint
 run(files_json, main, mode, answers_json, seed)
-                         -> JSON {files, timeline, error, need_input}: values / hit counts per line plus a step timeline,
+                         -> JSON {files, timeline, error, need_input, gui}: values / hit counts per line plus a step timeline,
                             recorded with sys.settrace
 """
-import ast, builtins, doctest, importlib, json, os, random, re, shutil, sys, tempfile, traceback, types
+import ast, builtins, doctest, importlib, json, os, random, re, shutil, sys, tempfile, traceback, types, unittest
 
-ALLOWED = ("random", "math", "time", "doctest")
+try:
+    import js  # only inside Pyodide: used to hand tkinter windows to the page
+except ImportError:
+    js = None
+
+ALLOWED = ("random", "math", "time", "doctest", "tkinter", "unittest", "enum")
 MUTATORS = {"append", "extend", "insert", "remove", "pop", "clear", "sort", "reverse", "update", "add", "discard", "setdefault", "popitem"}
 SHADOW = {"list", "dict", "set", "str", "int", "float", "sum", "max", "min", "len", "input", "print", "range", "type", "id", "sorted",
           "abs", "round", "all", "any", "map", "filter", "zip", "open", "next", "iter", "format", "tuple", "bool", "object", "chr", "ord"}
@@ -286,6 +291,16 @@ def analyze(src, mods_json="[]"):
 
 # ---------------------------------------------------------------- running
 
+_ttr_init = unittest.TextTestRunner.__init__
+
+
+def _ttr_stdout(self, stream=None, *a, **k):  # unittest writes to stderr by default, which the console shows in red
+    _ttr_init(self, sys.stdout if stream is None else stream, *a, **k)
+
+
+unittest.TextTestRunner.__init__ = _ttr_stdout
+
+
 class StepLimit(BaseException):
     pass
 
@@ -328,10 +343,34 @@ def snap(frame, names, store, key):
     return got
 
 
+_LIVE = {}  # a tkinter window outlives run(): its callbacks run later, so we keep what they need (see tk_event)
+TK = {}  # the tkinter look-alike's namespace, filled by tk_install()
+
+
+def tk_install(src):
+    ns = {"__name__": "tkshim"}
+    exec(compile(src, "<tkshim>", "exec"), ns)
+    ns["install"]()
+    if js is not None:
+        ns["set_post"](lambda s: js.tkPost(s))
+    TK.update(ns)
+
+
+def tk_cleanup():
+    if _LIVE:
+        shutil.rmtree(_LIVE.get("root"), ignore_errors=True)
+        for m in _LIVE.get("mods", ()):
+            sys.modules.pop(m, None)
+        _LIVE.clear()
+
+
 def run(files_json, main, mode="run", answers_json="[]", seed=0):
-    """Run 'main' (as __main__, or as a module + doctest.testmod when mode == 'doctest') with line tracing."""
+    """Run 'main' (as __main__, or as a module + doctest / unittest when mode says so) with line tracing."""
     files, answers = json.loads(files_json), json.loads(answers_json)
     random.seed(seed)  # same seed on every re-run, so replaying input() answers repeats the same random numbers
+    if TK:
+        TK["reset"]()  # closes any window left by the previous run
+    tk_cleanup()
     root = tempfile.mkdtemp()
     mods = {n[:-3] for n in files if n.endswith(".py")}
     names = list(files)
@@ -396,13 +435,13 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
 
         return local
 
-    real_import, real_input = builtins.__import__, builtins.input
     user = mods | {"__main__"}
+    real_import, real_input = builtins.__import__, builtins.input
 
     def guard(name, globals=None, locals=None, fromlist=(), level=0):
         if level == 0 and (globals is None or globals.get("__name__") in user):
             top = name.split(".")[0]
-            if top not in ALLOWED and top not in mods:
+            if top not in ALLOWED and top not in mods and top != "__main__":  # unittest.main() imports __main__
                 raise ImportError(f"'{top}' isn't available here. You can import: " + ", ".join(ALLOWED + tuple(sorted(mods - {main[:-3]}))))
         return real_import(name, globals, locals, fromlist, level)
 
@@ -442,25 +481,41 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
         msg = "".join(traceback.format_exception_only(type(e), e)).strip().splitlines()[-1]
         return {"file": loc[0], "line": loc[1], "msg": msg} if loc else None
 
-    saved = (sys.modules.get("__main__"), sys.path[:], os.getcwd(), sys.stdout, sys.stderr)
-    for m in mods:
-        sys.modules.pop(m, None)
-    builtins.__import__, builtins.input = guard, ui_input
-    sys.stdout, sys.stderr = Scrub(sys.stdout), Scrub(sys.stderr)
-    sys.path.insert(0, root)
-    os.chdir(root)
-    importlib.invalidate_caches()
-    err, need = None, False
-    try:
-        path = os.path.join(root, main)
-        mod = types.ModuleType("__main__" if mode == "run" else main[:-3])
-        mod.__file__ = path
+    mod = types.ModuleType("__main__" if mode == "run" else main[:-3])
+    mod.__file__ = os.path.join(root, main)
+    saved = {}
+
+    def enter():  # install the sandbox: import guard, traced execution, our own stdout, project files on the path
+        saved.update(main=sys.modules.get("__main__"), path=sys.path[:], cwd=os.getcwd(), out=sys.stdout, err=sys.stderr)
+        builtins.__import__, builtins.input = guard, ui_input
+        sys.stdout, sys.stderr = Scrub(sys.stdout), Scrub(sys.stderr)
+        sys.path.insert(0, root)
+        os.chdir(root)
+        importlib.invalidate_caches()
         sys.modules[mod.__name__] = mod
         sys.settrace(trace)
-        exec(compile(files[main], path, "exec"), mod.__dict__)
+
+    def leave():
+        sys.settrace(None)
+        builtins.__import__, builtins.input = real_import, real_input
+        sys.path[:] = saved["path"]
+        os.chdir(saved["cwd"])
+        sys.stdout, sys.stderr = saved["out"], saved["err"]
+        sys.modules.pop("__main__", None)
+        if saved["main"]:
+            sys.modules["__main__"] = saved["main"]
+
+    for m in mods:
+        sys.modules.pop(m, None)
+    err, need, gui = None, False, False
+    enter()
+    try:
+        exec(compile(files[main], mod.__file__, "exec"), mod.__dict__)
         if mode == "doctest":
             r = doctest.testmod(mod, verbose=False)
             print(f"doctest: {r.attempted} run, {r.failed} failed" if r.attempted else "doctest: no >>> examples found in docstrings")
+        elif mode == "unittest":
+            unittest.main(module=mod, argv=["unittest"], exit=False, verbosity=2)
     except (StepLimit, OutputLimit) as e:
         sys.stderr.write(f"{e}\n")
         err = {"file": cur[0], "line": cur[1], "msg": str(e)} if cur[0] else None
@@ -469,18 +524,75 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
     except SystemExit:
         pass
     except BaseException as e:
-        err = fail(e)
+        if TK and isinstance(e, TK["_MainloopExit"]):
+            pass  # root.mainloop(): the window stays open and its callbacks run later (tk_event)
+        else:
+            err = fail(e)
     finally:
-        sys.settrace(None)
-        builtins.__import__, builtins.input = real_import, real_input
-        sys.path[:] = saved[1]
-        os.chdir(saved[2])
-        sys.stdout, sys.stderr = saved[3], saved[4]
-        for m in mods | {"__main__"}:
-            sys.modules.pop(m, None)
-        if saved[0]:
-            sys.modules["__main__"] = saved[0]
-        shutil.rmtree(root, ignore_errors=True)
-    return json.dumps({"files": T, "error": err, "need_input": need,
+        gui = bool(TK) and not need and TK["active"]()
+        leave()
+        if gui:
+            def reset():
+                step[0] = 0
+                outn[0] = 0
+                outover[0] = False
+
+            _LIVE.update(enter=enter, leave=leave, reset=reset, T=T, step=step, root=root, mods=mods)
+        else:
+            if TK:
+                TK["finish"]()  # the script ended without mainloop(): its windows close, like real Tk
+            for m in mods | {"__main__"}:
+                sys.modules.pop(m, None)
+            shutil.rmtree(root, ignore_errors=True)
+    return json.dumps({"files": T, "error": err, "need_input": need, "gui": gui,
                        "timeline": {"files": names, "steps": steps, "facts": facts, "trunc": over[0]}})
+
+
+def tk_reply(touched=False):
+    out = TK["pump"]()
+    if _LIVE and touched:
+        out["files"] = _LIVE["T"]  # callbacks ran, so the node map's values have changed
+    if not out["alive"]:
+        tk_cleanup()
+    return json.dumps(out)
+
+
+def tk_call(fn):
+    """Run something that executes user callbacks (a window event, an after() timer) inside the same sandbox as run()."""
+    live = _LIVE
+    if live:
+        live["reset"]()
+        live["enter"]()
+    try:
+        fn()
+    except NeedInput:
+        sys.stderr.write("input() can't be used inside a window callback here; use an Entry widget instead.\n")
+    except (StepLimit, OutputLimit) as e:
+        sys.stderr.write(f"{e}\n")
+    except BaseException as e:
+        if not isinstance(e, TK["_MainloopExit"]):
+            sys.stderr.write("".join(traceback.format_exception_only(type(e), e)))
+    finally:
+        touched = bool(live) and live["step"][0] > 0
+        if live:
+            live["leave"]()
+    return tk_reply(touched)
+
+
+def tk_event(s):
+    return tk_call(lambda: TK["dispatch"](json.loads(s)))
+
+
+def tk_tick():
+    return tk_call(TK["tick"])
+
+
+def tk_pump():
+    return tk_reply()
+
+
+def tk_stop():  # close any window and drop its timers (the page replaced the project)
+    if TK:
+        TK["reset"]()
+    tk_cleanup()
 `;

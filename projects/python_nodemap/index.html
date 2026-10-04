@@ -1,110 +1,209 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Python Nodemap</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css">
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <header id="bar">
-    <span class="brand">Python Nodemap</span>
-    <button id="run" class="pri" title="Run (Ctrl+Enter)" disabled>▶ Run</button>
-    <button id="stop" class="stop" title="Stop the running program" hidden>■ Stop</button>
-    <button id="doctest" class="pri" title="Import this file and run its doctests" disabled>✔ Doctest</button>
-    <span class="sp"></span>
-    <button id="font-down" title="Smaller text">A−</button>
-    <button id="font-up" title="Larger text">A+</button>
-    <button id="theme" title="Light / dark theme">☀</button>
-    <button id="share" title="Copy a link that contains your files">Share</button>
-    <button id="imp" title="Import .py files or a .zip of them">Import</button>
-    <button id="exp" title="Download a .zip of every file plus a PNG of each node map">Export</button>
-    <input id="pick" type="file" accept=".zip,.py" multiple hidden>
-  </header>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Python Nodemap</title>
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.css" />
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css" />
+        <link rel="stylesheet" href="style.css" />
+    </head>
+    <body>
+        <header id="bar">
+            <span class="brand">Python Nodemap</span>
+            <button id="run" class="pri" title="Run (Ctrl+Enter)" disabled>
+                ▶ Run
+            </button>
+            <button
+                id="stop"
+                class="stop"
+                title="Stop the running program"
+                hidden>
+                ■ Stop
+            </button>
+            <button
+                id="doctest"
+                class="pri"
+                title="Import this file and run its doctests"
+                disabled>
+                ✔ Doctest
+            </button>
+            <button
+                id="unittest"
+                class="pri"
+                title="Import this file and run its unittest tests"
+                disabled>
+                ☑ Tests
+            </button>
+            <span class="sp"></span>
+            <button id="font-down" title="Smaller text">A−</button>
+            <button id="font-up" title="Larger text">A+</button>
+            <button id="theme" title="Light / dark theme">☀</button>
+            <button id="share" title="Copy a link that contains your files">
+                Share
+            </button>
+            <button id="imp" title="Import .py files or a .zip of them">
+                Import
+            </button>
+            <button
+                id="exp"
+                title="Download a .zip of every file plus a PNG of each node map">
+                Export
+            </button>
+            <input id="pick" type="file" accept=".zip,.py" multiple hidden />
+        </header>
 
-  <div id="work">
-    <aside id="side">
-      <div class="h">EXPLORER <button id="new" title="New file">+</button></div>
-      <ul id="files"></ul>
-    </aside>
-    <section id="edit">
-      <div id="tabs"></div>
-      <div id="cm"></div>
-    </section>
-    <div id="vsplit" class="split"></div>
-    <section id="mapp">
-      <div class="h">NODE MAP <span id="mapname"></span><span id="maperr"></span></div>
-      <div class="bar2">
-        <input id="q" type="search" placeholder="Find variable…" spellcheck="false" title="Highlight every node and wire that mentions this (Enter = next)">
-        <span class="grp">
-          <button class="ic" id="fold-all" title="Collapse everything">⊟</button>
-          <button class="ic" id="unfold-all" title="Expand everything">⊞</button>
-        </span>
-        <span class="grp" title="Which wires to draw">
-          <button class="tg" id="w-data">data</button>
-          <button class="tg" id="w-call">calls</button>
-          <button class="tg" id="w-back">loops</button>
-          <button class="tg" id="w-only" title="Only show the wires of the selected node">selected</button>
-        </span>
-        <span class="grp">
-          <button class="ic" id="z-out" title="Zoom out">−</button>
-          <button class="ic" id="zlabel" title="Back to 100%">100%</button>
-          <button class="ic" id="z-in" title="Zoom in (or Ctrl + mouse wheel)">+</button>
-          <button class="ic" id="z-fit" title="Fit to width">fit</button>
-        </span>
-      </div>
-      <div id="steps" hidden>
-        <button class="ic" id="s-first" title="Back to the start">⏮</button>
-        <button class="ic" id="s-prev" title="Step back">◀</button>
-        <button class="ic" id="s-play" title="Play / pause">▶</button>
-        <button class="ic" id="s-next" title="Step forward">▶|</button>
-        <button class="ic" id="s-last" title="Jump to the end">⏭</button>
-        <input id="s-range" type="range" min="0" max="0" value="0">
-        <span id="s-label"></span>
-      </div>
-      <div id="map">
-        <div class="empty loading">
-          <div id="ptext">Loading Python… 0%</div>
-          <div class="pbar"><div id="pbar"></div></div>
-          <div class="note">About 5 MB the first time; after that it loads from your browser's cache.</div>
+        <div id="work">
+            <aside id="side">
+                <div class="h">
+                    EXPLORER <button id="new" title="New file">+</button>
+                </div>
+                <ul id="files"></ul>
+            </aside>
+            <section id="edit">
+                <div id="tabs"></div>
+                <div id="cm"></div>
+            </section>
+            <div id="vsplit" class="split"></div>
+            <section id="mapp">
+                <div class="h">
+                    NODE MAP <span id="mapname"></span><span id="maperr"></span>
+                </div>
+                <div class="bar2">
+                    <input
+                        id="q"
+                        type="search"
+                        placeholder="Find variable…"
+                        spellcheck="false"
+                        title="Highlight every node and wire that mentions this (Enter = next)" />
+                    <span class="grp">
+                        <button
+                            class="ic"
+                            id="fold-all"
+                            title="Collapse everything">
+                            ⊟
+                        </button>
+                        <button
+                            class="ic"
+                            id="unfold-all"
+                            title="Expand everything">
+                            ⊞
+                        </button>
+                    </span>
+                    <span class="grp" title="Which wires to draw">
+                        <button class="tg" id="w-data">data</button>
+                        <button class="tg" id="w-call">calls</button>
+                        <button class="tg" id="w-back">loops</button>
+                        <button
+                            class="tg"
+                            id="w-only"
+                            title="Only show the wires of the selected node">
+                            selected
+                        </button>
+                    </span>
+                    <span class="grp">
+                        <button class="ic" id="z-out" title="Zoom out">
+                            −
+                        </button>
+                        <button class="ic" id="zlabel" title="Back to 100%">
+                            100%
+                        </button>
+                        <button
+                            class="ic"
+                            id="z-in"
+                            title="Zoom in (or Ctrl + mouse wheel)">
+                            +
+                        </button>
+                        <button class="ic" id="z-fit" title="Fit to width">
+                            fit
+                        </button>
+                    </span>
+                </div>
+                <div id="steps" hidden>
+                    <button class="ic" id="s-first" title="Back to the start">
+                        ⏮
+                    </button>
+                    <button class="ic" id="s-prev" title="Step back">|◀</button>
+                    <button class="ic" id="s-play" title="Play / pause">
+                        ▶
+                    </button>
+                    <button class="ic" id="s-next" title="Step forward">
+                        ▶|
+                    </button>
+                    <button class="ic" id="s-last" title="Jump to the end">
+                        ⏭
+                    </button>
+                    <input
+                        id="s-range"
+                        type="range"
+                        min="0"
+                        max="0"
+                        value="0" />
+                    <span id="s-label"></span>
+                </div>
+                <div id="map">
+                    <div class="empty loading">
+                        <div id="ptext">Loading Python… 0%</div>
+                        <div class="pbar"><div id="pbar"></div></div>
+                        <div class="note">
+                            About 5 MB the first time; after that it loads from
+                            your browser's cache.
+                        </div>
+                    </div>
+                </div>
+            </section>
         </div>
-      </div>
-    </section>
-  </div>
 
-  <div id="hsplit" class="split"></div>
-  <section id="con">
-    <div class="h">CONSOLE <button id="clear">Clear</button></div>
-    <pre id="out"></pre>
-    <div id="inrow" hidden><span>input ›</span><input id="in" autocomplete="off" spellcheck="false" placeholder="type your answer and press Enter"></div>
-  </section>
+        <div id="tkhost"></div>
+        <div id="hsplit" class="split"></div>
+        <section id="con">
+            <div class="h">CONSOLE <button id="clear">Clear</button></div>
+            <pre id="out"></pre>
+            <div id="inrow" hidden>
+                <span>input ›</span
+                ><input
+                    id="in"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="type your answer and press Enter" />
+            </div>
+        </section>
 
-  <footer id="status">
-    <span id="st">Loading Python…</span>
-    <span id="probs" title=""></span>
-    <span class="sp"></span>
-    <span id="pos"></span>
-    <span>Python · random, math, time, doctest</span>
-  </footer>
+        <footer id="status">
+            <span id="st">Loading Python…</span>
+            <span id="probs" title=""></span>
+            <span class="sp"></span>
+            <span id="pos"></span>
+            <span
+                >Python · random, math, time, doctest, tkinter, unittest,
+                enum</span
+            >
+        </footer>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/comment/comment.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/searchcursor.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/search.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="runner.js"></script>
-  <script src="worker.js"></script>
-  <script src="nodemap.js"></script>
-  <script src="complete.js"></script>
-  <script src="app.js"></script>
-</body>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/comment/comment.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/searchcursor.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/search.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+        <script src="runner.js"></script>
+        <script src="tkshim.js"></script>
+        <script src="worker.js"></script>
+        <script src="tkview.js"></script>
+        <script src="nodemap.js"></script>
+        <script src="complete.js"></script>
+        <script src="app.js"></script>
+    </body>
 </html>

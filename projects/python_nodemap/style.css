@@ -163,3 +163,71 @@ li.CodeMirror-hint-active { background: #094771; color: #fff; }
 .CodeMirror-dialog input { color: var(--text); background: var(--input); border: 1px solid var(--line); font-family: Consolas, monospace; }
 .CodeMirror-dialog button { font-size: 12px; }
 .cm-searching { background: rgba(255, 213, 0, .35); }
+
+/* node map panel in the light theme (the SVG itself switches palette in nodemap.js) */
+body.light #mapp { background: #f4f6fa; }
+body.light .empty { color: #6b7590; }
+body.light .loading #ptext { color: #2a3550; }
+body.light .pbar { background: #dfe5ef; }
+
+/* tkinter windows (they look like light Windows windows in both themes) */
+#tkhost { position: fixed; inset: 0; pointer-events: none; z-index: 60; }
+.tkwin { position: absolute; pointer-events: auto; display: flex; flex-direction: column; background: #f0f0f0; color: #000; border: 1px solid #5c6370; border-radius: 7px 7px 2px 2px; box-shadow: 0 10px 32px rgba(0, 0, 0, .5); font: 9pt "Segoe UI", Tahoma, sans-serif; outline: none; max-width: 96vw; max-height: 92vh; }
+.tkwin:focus-within { box-shadow: 0 12px 36px rgba(0, 0, 0, .6), 0 0 0 1px #0078d4; }
+.tktitle { display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 10px; background: linear-gradient(#3b78c4, #2a5fa8); color: #fff; cursor: move; user-select: none; border-radius: 6px 6px 0 0; font-size: 12px; }
+.tktitle span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tkx { font-weight: 400; cursor: pointer; padding: 0 7px; border-radius: 3px; }
+.tkx:hover { background: #c42b1c; }
+.tkmenubar { background: #f0f0f0; border-bottom: 1px solid #d4d4d4; position: relative; }
+.tkbar { display: flex; }
+.tkmtop, .tkmitem { position: relative; padding: 3px 10px; cursor: default; white-space: nowrap; display: flex; gap: 18px; justify-content: space-between; }
+.tkmtop:hover, .tkmitem:hover { background: #cce4f7; }
+.tkmenu { display: none; position: absolute; left: 0; top: 100%; background: #fff; border: 1px solid #aaa; box-shadow: 2px 3px 8px rgba(0, 0, 0, .3); min-width: 140px; z-index: 5; flex-direction: column; }
+.tkmtop:hover > .tkmenu, .tkmitem.sub:hover > .tkmenu { display: flex; }
+.tkmitem.sub > .tkmenu { left: 100%; top: 0; }
+.tkmsep { height: 1px; background: #ccc; margin: 3px 0; }
+.tkacc { opacity: .6; font-style: normal; }
+.tkbody { position: relative; min-width: 160px; min-height: 48px; display: flex; flex-direction: column; overflow: hidden; }
+
+.pk { display: flex; min-width: 0; min-height: 0; }
+.pk.root { flex: 1 1 auto; }
+.pkbox { display: flex; box-sizing: border-box; min-width: 0; min-height: 0; }
+.pkbox.fx > * { flex: 1 1 auto; }
+.pkbox.fy > * { align-self: stretch; }
+.tk-grid { display: grid !important; justify-content: start; align-content: start; }
+.gcell { display: flex; box-sizing: border-box; min-width: 0; }
+.gcell.sx > *, .plcell.sx > * { flex: 1 1 auto; }
+.gcell.sy > *, .plcell.sy > * { align-self: stretch; }
+.tk-place { position: relative; display: block !important; }
+.tk-rel { position: relative; }
+.plcell { position: absolute; display: flex; }
+
+.tk { box-sizing: content-box; font: inherit; color: inherit; margin: 0; }
+.tk-label { display: flex; align-items: center; justify-content: center; white-space: pre-wrap; text-align: center; padding: 1px; }
+.tk-button { display: inline-flex; align-items: center; justify-content: center; white-space: pre; border: 2px outset #f4f4f4; background: #e1e1e1; color: #000; padding: 1px 8px; cursor: pointer; }
+.tk-button:hover:not(:disabled) { background: #e9f1fb; }
+.tk-button:active:not(:disabled) { border-style: inset; }
+.tk-button:disabled, .tk-disabled { color: #888; }
+.tk-entry, .tk-text, .tk-list { border: 2px inset #d4d4d4; background: #fff; color: #000; padding: 1px 2px; outline: none; min-width: 0; }
+.tk-text { resize: none; font-family: Consolas, "Courier New", monospace; }
+.tk-list { padding: 0; }
+.tk-check { display: inline-flex; align-items: center; gap: 4px; }
+.tk-check input { margin: 0; }
+.tk-scale { display: inline-flex; align-items: center; gap: 6px; }
+.tk-scale input { flex: 1; }
+.tk-sl:empty { display: none; }
+.tk-frame { display: flex; flex-direction: column; }
+.tk-labelframe { border: 2px groove #d0d0d0; padding: 4px; margin: 0; min-width: 0; }
+.tk-labelframe legend { padding: 0 4px; }
+.tk-sep { height: 1px; background: #bbb; margin: 2px 0; align-self: stretch; }
+.tk-progress { height: 14px; }
+.tk-canvas { display: block; }
+
+.tkdialog { position: fixed; inset: 0; pointer-events: auto; background: rgba(0, 0, 0, .25); display: flex; align-items: center; justify-content: center; z-index: 70; }
+.tkdbox { background: #f0f0f0; color: #000; border: 1px solid #555; min-width: 260px; max-width: 80vw; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); font: 9pt "Segoe UI", Tahoma, sans-serif; }
+.tkdtitle { background: #2a5fa8; color: #fff; padding: 5px 10px; font-size: 12px; }
+.tkdmsg { display: flex; gap: 14px; align-items: center; padding: 18px 20px; white-space: pre-wrap; }
+.tkdicon { flex: none; width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; background: #2a7de1; }
+.tkdicon.warning { background: #e6a100; }
+.tkdicon.error { background: #c42b1c; }
+.tkdbtn { display: flex; justify-content: center; padding: 6px 20px 14px; }

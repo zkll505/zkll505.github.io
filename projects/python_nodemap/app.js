@@ -101,12 +101,14 @@ const W = {
     W.w.onmessage = ({ data: m }) => {
       if (m.type === 'out') return W.onOut(m.text, m.cls);
       if (m.type === 'progress') return W.onProgress(m.loaded, m.total);
+      if (m.type === 'tk') return TkView.apply(m.tree);
+      if (m.type === 'trace') return liveTrace(m.files);
       const p = W.pend.get(m.id);
       W.pend.delete(m.id);
       if (p) m.error ? p.rej(new Error(m.error)) : p.res(m.result);
     };
     W.w.onerror = e => out(`Python worker error: ${e.message || e}\n`, 'err');
-    W.ready = W.call('init', { url: PYODIDE, runner: RUNNER_PY, sizes: PYODIDE_SIZES });
+    W.ready = W.call('init', { url: PYODIDE, runner: RUNNER_PY, tk: TK_PY, sizes: PYODIDE_SIZES });
     W.ready.catch(() => {});
   },
   restart() { // Stop: killing the worker is the only way to interrupt running Python
@@ -328,6 +330,7 @@ function draw() {
     fold: new Set(S.fold[S.active]),
     now: nf === S.active ? nl : null,
     err: S.error?.file === S.active ? S.error.line : null,
+    light: P.light,
   });
   box.innerHTML = b.svg;
   S.dim = b;
@@ -421,6 +424,7 @@ function applyPrefs() {
   for (const k of ['data', 'call', 'back', 'only']) $('#w-' + k).setAttribute('aria-pressed', P[k]);
   cm.refresh();
   store(PREFS, P);
+  draw(); // the node map has its own light palette
 }
 for (const k of ['data', 'call', 'back', 'only']) $('#w-' + k).onclick = () => { P[k] = !P[k]; applyPrefs(); };
 $('#theme').onclick = () => { P.light = !P.light; applyPrefs(); };
@@ -468,16 +472,18 @@ $('#s-play').onclick = () => {
 // Python can't block waiting for input() in a worker without special server headers, so input() asks for the answer
 // and the page re-runs the program from the top, feeding it the answers collected so far (random is seeded the same).
 let job = null;
-const setRunning = on => { $('#run').disabled = $('#doctest').disabled = on || !ready; $('#stop').hidden = !on; };
+const setRunning = on => { $('#run').disabled = $('#doctest').disabled = $('#unittest').disabled = on || !ready; $('#stop').hidden = !on; };
 async function run(mode = 'run') {
   if (job || !ready) return;
   stopPlay();
   S.tl = null; S.step = null; S.error = null;
   showMarks(); updateStepper(); draw();
+  TkView.closeAll();
   job = { files: { ...S.files }, main: S.active, mode, answers: [], seed: Math.floor(Math.random() * 2 ** 31) };
+  S.ranFiles = { ...S.files };
   $('#out').textContent = '';
   shown = 0;
-  out(`▶ ${mode === 'doctest' ? 'doctest ' : ''}${S.active}\n`, 'dim');
+  out(`▶ ${mode === 'run' ? '' : mode + ' '}${S.active}\n`, 'dim');
   attempt();
 }
 async function attempt() {
@@ -508,7 +514,7 @@ function finish(res, t0) {
   setRunning(false);
   setStatus('Ready');
   if (res) { S.trace = res.files; S.tl = res.timeline; S.step = null; S.views = null; S.error = res.error; }
-  out(`\n[finished in ${Math.round(performance.now() - t0)} ms]\n`, 'dim');
+  out(`\n[${res?.gui ? 'script finished, window still open (close it or press Run to end it)' : 'finished'} in ${Math.round(performance.now() - t0)} ms]\n`, 'dim');
   const e = S.error;
   if (e && e.file !== S.active && S.files[e.file]) openFile(e.file); else { draw(); showMarks(); updateStepper(); }
   if (e && e.file === S.active) cm.scrollIntoView({ line: e.line - 1, ch: 0 }, 120);
@@ -523,6 +529,7 @@ function stop() {
   if (!job) return;
   job = null;
   $('#inrow').hidden = true;
+  TkView.closeAll();
   W.restart();
   out('\n■ stopped\n', 'dim');
   setRunning(false);
@@ -531,7 +538,18 @@ function stop() {
 }
 $('#run').onclick = () => run();
 $('#doctest').onclick = () => run('doctest');
+$('#unittest').onclick = () => run('unittest');
 $('#stop').onclick = stop;
+
+// a tkinter window keeps running after the script returned; its callbacks update the node map's values
+let liveT = 0;
+function liveTrace(files) {
+  if (job || !S.ranFiles) return;
+  for (const [n, t] of Object.entries(files)) if (S.ranFiles[n] === S.files[n]) S.trace[n] = t;
+  clearTimeout(liveT);
+  liveT = setTimeout(() => { if (S.step == null) draw(); }, 120);
+}
+TkView.setSend(ev => W.w.postMessage({ type: 'tkevent', ev }));
 
 // ---- import / export / share
 const download = (blob, name) => {
@@ -543,16 +561,30 @@ const safeName = p => {
   const n = p.split(/[\\/]/).pop().replace(/\.py$/i, '').replace(/\W/g, '_') || 'file';
   return (/^\d/.test(n) ? '_' : '') + n + '.py';
 };
-function mergeFiles(got) {
+function mergeFiles(got) { // adds / overwrites the given files, keeps the rest
   const names = Object.keys(got);
   names.forEach(n => { S.files[n] = got[n]; docs[n]?.setValue(got[n]); delete S.trace[n]; });
   S.tl = null; S.step = null; S.error = null;
   openFile(names[0]);
 }
+function replaceProject(got) { // a zip or a share link is a whole project: everything already in the explorer is removed
+  if (job) stop();
+  const names = Object.keys(got).sort();
+  stopPlay();
+  TkView.closeAll();
+  W.w.postMessage({ type: 'tkreset' }); // a window left open by the old project would keep running
+  S.files = { ...got };
+  for (const n of Object.keys(docs)) delete docs[n];
+  Object.assign(S, { trace: {}, graph: {}, key: {}, err: {}, hints: {}, fold: {}, tl: null, step: null, views: null, error: null, ranFiles: null });
+  S.open = [names.includes('main.py') ? 'main.py' : names[0]];
+  openFile(S.open[0]);
+}
 async function importFiles(list) {
   const got = {};
+  let zipped = false;
   for (const f of list) {
     if (/\.zip$/i.test(f.name)) {
+      zipped = true;
       const z = await JSZip.loadAsync(f);
       for (const e of Object.values(z.files)) {
         if (!e.dir && /\.py$/i.test(e.name) && !/(^|\/)__MACOSX\//.test(e.name)) got[safeName(e.name)] = await e.async('string');
@@ -561,6 +593,12 @@ async function importFiles(list) {
   }
   const names = Object.keys(got);
   if (!names.length) return alert('No .py files found.');
+  if (zipped) {
+    const lost = Object.keys(S.files).filter(n => S.files[n] !== got[n]); // current files that will disappear or change
+    const shown = lost.slice(0, 6).join(', ') + (lost.length > 6 ? ', …' : '');
+    if (lost.length && !confirm(`Importing a zip replaces everything in the explorer with the ${names.length} file(s) from the zip.\nThese current files will be removed or changed: ${shown}.\nContinue?`)) return;
+    return replaceProject(got);
+  }
   const clash = names.filter(n => n in S.files && S.files[n] !== got[n]);
   if (clash.length && !confirm(`Replace ${clash.join(', ')} with the imported version?`)) return;
   mergeFiles(got);
@@ -574,7 +612,7 @@ $('#exp').onclick = async () => {
     zip.file(name, src);
     try {
       const g = JSON.parse(await W.call('analyze', { src, mods: modsOf() }));
-      if (!g.error) zip.file(name.replace(/\.py$/, '') + '_nodemap.png', await NodeMap.png(g, S.trace[name]));
+      if (!g.error) zip.file(name.replace(/\.py$/, '') + '_nodemap.png', await NodeMap.png(g, S.trace[name], { light: P.light }));
     } catch {}
   }
   download(await zip.generateAsync({ type: 'blob' }), 'python_project.zip');
@@ -614,7 +652,7 @@ async function loadShared() {
   if (!names.length || names.length > 50 || !names.every(n => okName(n) && typeof files[n] === 'string' && files[n].length < 500000)) {
     return alert("That share link doesn't contain a valid project.");
   }
-  if (confirm(`Open a shared project (${names.join(', ')})?\nFiles with the same names will be replaced.`)) mergeFiles(files);
+  if (confirm(`Open a shared project (${names.join(', ')})?\nThis replaces everything currently in your explorer.`)) replaceProject(files);
 }
 addEventListener('hashchange', loadShared);
 
