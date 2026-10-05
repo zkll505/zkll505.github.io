@@ -1,13 +1,20 @@
-"""Self-check for the Python backend inside runner.js. Run: python test_runner.py"""
-import io, json, contextlib, pathlib, re, types
+"""Backend self-check: runner.py plus every library, loaded the way the page loads them. Run: python tests/test_backend.py"""
+import contextlib, importlib.util, io, json, pathlib, re, sys
 
-js = pathlib.Path(__file__).with_name("runner.js").read_text(encoding="utf-8")
-runner = types.ModuleType("runner")
-exec(compile(re.search(r"String\.raw`(.*)`;", js, re.S).group(1), "runner.js", "exec"), runner.__dict__)
-TK_SRC = re.search(r"String\.raw`(.*)`;", pathlib.Path(__file__).with_name("tkshim.js").read_text(encoding="utf-8"), re.S).group(1)
-runner.tk_install(TK_SRC)
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+spec = importlib.util.spec_from_file_location("runner", ROOT / "runner.py")
+runner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner)
+
+# same libraries, same order as the <script> tags in index.html
+dirs = re.findall(r"libs/(\w+)/lib\.js", (ROOT / "index.html").read_text(encoding="utf-8"))
+names = [n for d in dirs for n in re.findall(r"name: '(\w+)'", (ROOT / "libs" / d / "lib.js").read_text(encoding="utf-8"))]
+runner.configure(json.dumps(names))
+for d in dirs:
+    if (ROOT / "libs" / d / "lib.py").exists():
+        runner.load_lib(d, (ROOT / "libs" / d / "lib.py").read_text(encoding="utf-8"))
 POSTS = []  # trees the page would receive while a script is running
-runner.TK["set_post"](lambda s: POSTS.append(json.loads(s)))
+runner.GUI["tkinter"]["set_post"](lambda s: POSTS.append(json.loads(s)))
 
 SRC = '''import math
 from helpers import twice
@@ -236,15 +243,15 @@ def tkinter_app():
     assert btn["m"]["column"] == 0 or btn["m"]["row"] == 0  # second grid() call reuses row 0
     assert canvas["items"][0]["t"] == "oval" and canvas["items"][0]["o"]["fill"] == "red"
     assert POSTS[-1]["dialogs"][0]["msg"] == "there" and POSTS[-1]["wants"] == ["key"]
-    ev = lambda **e: json.loads(runner.tk_event(json.dumps(e)))
+    ev = lambda **e: json.loads(runner.gui_event("tkinter", json.dumps(e)))
     with contextlib.redirect_stdout(io.StringIO()) as o:
         ev(t="value", id=entry["id"], v="abc")
         out = ev(t="click", id=btn["id"])
         ev(t="ev", id=win["id"], k="key", keysym="a", char="a")
-        t = json.loads(runner.tk_tick())
+        t = json.loads(runner.gui_tick("tkinter"))
         import time as _t
         _t.sleep(0.02)
-        runner.tk_tick()
+        runner.gui_tick("tkinter")
     assert "entry says abc" in o.getvalue() and "key a" in o.getvalue() and "timer fired" in o.getvalue(), o.getvalue()
     assert out["tree"]["wins"][0]["k"][0]["o"]["text"] == "clicked 1", "a callback's change reaches the page"
     assert out["files"]["main.py"]["vals"], "the node map gets fresh values after a callback"
@@ -252,10 +259,15 @@ def tkinter_app():
     out = ev(t="close", id=win["id"])
     assert not out["alive"] and not runner._LIVE, "closing the window ends the program"
 
-    POSTS.clear()  # a script that never calls mainloop(): the window is shown by update() and closes when the script ends
+    POSTS.clear()  # a script that never calls mainloop() but showed a window (update()): the window stays open, like in IDLE
     with contextlib.redirect_stdout(io.StringIO()):
         r = json.loads(runner.run(json.dumps({"a.py": "import tkinter as tk\nr = tk.Tk()\ntk.Label(r, text='x').pack()\nr.update()\n"}), "a.py"))
-    assert not r["gui"] and len(POSTS[0]["wins"]) == 1 and POSTS[-1]["wins"] == [], POSTS
+    assert r["gui"] and len(POSTS[0]["wins"]) == 1, POSTS
+    runner.gui_stop()
+    POSTS.clear()  # ... but a window that was never shown (no update/mainloop) is just dropped
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = json.loads(runner.run(json.dumps({"a.py": "import tkinter as tk\nr = tk.Tk()\ntk.Label(r, text='x').pack()\n"}), "a.py"))
+    assert not r["gui"] and not POSTS, POSTS
 
 
 def tkinter_widgets():
@@ -266,7 +278,7 @@ def tkinter_widgets():
     by = {}
     for n in _walk(win):
         by.setdefault(n["t"], []).append(n)
-    ev = lambda **e: json.loads(runner.tk_event(json.dumps(e)))
+    ev = lambda **e: json.loads(runner.gui_event("tkinter", json.dumps(e)))
     show, boom = by["button"]
     with contextlib.redirect_stdout(io.StringIO()) as o, contextlib.redirect_stderr(io.StringIO()) as se:
         ev(t="value", id=by["text"][0]["id"], v="new text")
@@ -278,7 +290,7 @@ def tkinter_widgets():
         out = ev(t="click", id=boom["id"])
         ev(t="click", id=show["id"])
     assert o.getvalue().count("'new text\\n' True a (1,) 7") == 2, o.getvalue()
-    assert "Exception in Tkinter callback" in se.getvalue() and "ZeroDivisionError" in se.getvalue() and "tkshim" not in se.getvalue(), se.getvalue()
+    assert "Exception in Tkinter callback" in se.getvalue() and "ZeroDivisionError" in se.getvalue() and "<lib" not in se.getvalue(), se.getvalue()
     assert by["text"][0]["v"] == "hello\nworld" and by["listbox"][0]["items"] == ["one", "two", "three"]
     ev(t="close", id=win["id"])
 
@@ -327,7 +339,7 @@ def tkinter_classes():
     assert win["o"]["title"] == "Class app" and by["frame"][0]["o"]["bg"] == "white"
     assert by["label"][0]["o"]["font"] == {"f": "Arial", "s": 14, "px": False, "b": True, "i": True, "u": False, "o": False}, by["label"][0]["o"]
     assert by["combobox"][0]["v"] == "y" and by["combobox"][0]["items"] == ["x", "y"] and by["progressbar"][0]["max"] == 10
-    ev = lambda **e: json.loads(runner.tk_event(json.dumps(e)))
+    ev = lambda **e: json.loads(runner.gui_event("tkinter", json.dumps(e)))
     with contextlib.redirect_stdout(io.StringIO()) as o:
         out = ev(t="click", id=by["button"][0]["id"])
     assert "combo: y 1" in o.getvalue(), o.getvalue()
@@ -345,7 +357,7 @@ def tkinter_star_import():
     assert r["gui"] and r["error"] is None, r
     labels = [n for n in _walk(POSTS[-1]["wins"][0]) if n["t"] == "label"]
     assert [n["o"]["text"] for n in labels] == ["hi", "x"]
-    runner.TK["dispatch"]({"t": "close", "id": POSTS[-1]["wins"][0]["id"]})
+    runner.GUI["tkinter"]["dispatch"]({"t": "close", "id": POSTS[-1]["wins"][0]["id"]})
     # the real module doesn't hand out ttk-only names or submodules through *
     bad = "from tkinter import *\nprint(Combobox)\n"
     with contextlib.redirect_stderr(io.StringIO()) as se:
@@ -372,6 +384,111 @@ def enum_and_unittest():
         assert se.getvalue() == "", se.getvalue()  # nothing red: unittest's report goes to stdout
 
 
+TURTLE = '''import turtle
+t = turtle.Turtle()
+t.speed(0)
+t.forward(100)
+t.left(90)
+t.forward(50)
+print(t.pos(), t.heading(), t.xcor(), t.ycor(), round(t.distance(0, 0), 3))
+t.penup()
+t.goto(10, 20)
+t.pendown()
+t.color("red", "yellow")
+t.begin_fill()
+for _ in range(3):
+    t.forward(40)
+    t.left(120)
+t.end_fill()
+t.dot(8, "blue")
+t.write("hi", font=("Arial", 12, "bold"))
+turtle.colormode(255)
+t.pencolor((255, 0, 0))
+print(t.pencolor(), turtle.Vec2D(1, 2) + turtle.Vec2D(3, 4))
+turtle.bgcolor("lightgray")
+turtle.title("Square")
+screen = turtle.Screen()
+screen.onclick(lambda x, y: print("click", x, y))
+screen.onkey(lambda: print("key up"), "Up")
+screen.ontimer(lambda: print("timer"), 5)
+screen.listen()
+turtle.done()
+print("never")
+'''
+
+
+def turtle_lib():
+    POSTS.clear()
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        r = json.loads(runner.run(json.dumps({"t.py": TURTLE}), "t.py"))
+    assert r["gui"] and r["error"] is None, r
+    assert o.getvalue() == "(100.00,50.00) 90.0 100.0 50.0 111.803\n#ff0000 (4.00,6.00)\n", o.getvalue()  # and "never" didn't print
+    win = POSTS[-1]["wins"][0]
+    cv = next(n for n in _walk(win) if n["t"] == "canvas")
+    items = cv["items"]
+    assert win["o"]["title"] == "Square" and cv["o"]["bg"] == "lightgray"
+    lines = [i for i in items if i["t"] == "line"]
+    assert lines[0]["c"] == [360, 270, 460, 270] and lines[1]["c"] == [460, 270, 460, 220], lines[:2]  # canvas centre is the origin, y points up
+    assert [i["o"]["fill"] for i in items if i["t"] == "oval"] == ["blue"] and [i["o"]["text"] for i in items if i["t"] == "text"] == ["hi"]
+    polys = [i for i in items if i["t"] == "polygon"]
+    assert any(p["o"].get("outline") == "" and p["o"]["fill"] == "yellow" and len(p["c"]) == 8 for p in polys), polys  # the filled triangle (+ its start point)
+    assert items[-1]["t"] == "polygon" and items[-1]["o"]["outline"] == "#ff0000", "the turtle itself is drawn on top"
+    assert POSTS[-1]["wants"] == ["keyup", "press"]
+    ev = lambda **e: json.loads(runner.gui_event("tkinter", json.dumps(e)))
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        ev(t="ev", id=cv["id"], k="press", num=1, x=460, y=270)
+        ev(t="ev", id=cv["id"], k="keyup", keysym="Up")
+        import time as _t
+        _t.sleep(0.02)
+        runner.gui_tick("tkinter")
+    assert o.getvalue() == "click 100.0 0.0\nkey up\ntimer\n", o.getvalue()
+    ev(t="close", id=win["id"])
+
+    POSTS.clear()  # animation: a move at the default speed is posted as several frames, the line growing toward its end
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = json.loads(runner.run(json.dumps({"a.py": "import turtle\nturtle.forward(100)\n"}), "a.py"))
+    ends = []
+    for tree in POSTS:
+        if tree["wins"]:
+            cv = next(n for n in _walk(tree["wins"][0]) if n["t"] == "canvas")
+            ends += [i["c"][2] for i in cv["items"] if i["t"] == "line"]
+    assert r["gui"], "no done(): the drawing stays on screen after the script ends"
+    final = json.loads(runner.gui_pump("tkinter"))["tree"]  # the page asks for the last frame right after run() (worker.js)
+    ends += [i["c"][2] for i in next(n for n in _walk(final["wins"][0]) if n["t"] == "canvas")["items"] if i["t"] == "line"]
+    assert ends == sorted(ends) and len(set(ends)) >= 3 and ends[-1] == 460, ends
+    runner.gui_stop()
+
+    with contextlib.redirect_stderr(io.StringIO()) as se:
+        e = json.loads(runner.run(json.dumps({"b.py": "import turtle\nturtle.shape('nope')\n"}), "b.py"))["error"]
+    assert "TurtleGraphicsError" in e["msg"] and "<lib" not in se.getvalue(), (e, se.getvalue())
+
+    two = json.dumps({"c.py": "import turtle\nturtle.forward(10)\nturtle.done()\n"})  # run again while the first window is still open
+    for _ in range(2):
+        POSTS.clear()
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert json.loads(runner.run(two, "c.py"))["gui"]
+        assert POSTS and POSTS[-1]["wins"], "the second run must get its own window"
+    runner.gui_stop()
+
+
+def example_library():
+    """docs/examples/clicker is the library ADDING_A_LIBRARY.md walks through, so it has to really work."""
+    runner.configure(json.dumps(names + ["clicker"]))
+    runner.load_lib("clicker", (ROOT / "docs" / "examples" / "clicker" / "lib.py").read_text(encoding="utf-8"))
+    posts = []
+    runner.GUI["clicker"]["set_post"](posts.append)
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        r = json.loads(runner.run(json.dumps({"c.py": "import clicker\nclicker.show()\nclicker.mainloop()\nprint('never')\n"}), "c.py"))
+    assert r["gui"] and r["error"] is None and o.getvalue() == "", (r, o.getvalue())
+    assert json.loads(posts[0]) == {"count": 0, "open": True}
+    out = json.loads(runner.gui_event("clicker", json.dumps({"type": "click"})))
+    assert out["tree"] == {"count": 1, "open": True} and out["lib"] == "clicker" and out["alive"], out
+    out = json.loads(runner.gui_event("clicker", json.dumps({"type": "close"})))
+    assert not out["alive"] and out["tree"]["open"] is False and not runner._LIVE
+    del runner.GUI["clicker"]
+    runner.configure(json.dumps(names))
+
+
 if __name__ == "__main__":
     runner.LIMIT = 20_000
     analyze()
@@ -383,5 +500,7 @@ if __name__ == "__main__":
     tkinter_widgets()
     tkinter_classes()
     tkinter_star_import()
+    turtle_lib()
+    example_library()
     enum_and_unittest()
     print("ok")

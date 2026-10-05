@@ -1,20 +1,24 @@
-/* Python backend for the node map, kept as a JS string so the page also works when opened straight from disk (file://),
-   where the browser blocks fetch(). worker.js runs it inside Pyodide. test_runner.py extracts and tests it. */
-const RUNNER_PY = String.raw`"""Backend for the node map. Runs inside Pyodide in a Web Worker (see worker.js).
+"""Backend for the node map. Runs inside Pyodide in a Web Worker (see worker.js).
 
+configure(allowed_json)  -> set the import allow-list (the names of the registered libraries)
+load_lib(name, src)      -> run a library's lib.py (it may add run modes and a GUI backend; docs/ADDING_A_LIBRARY.md)
 analyze(src, mods_json)  -> JSON {nodes, wires, hints}: one node per statement, wires = data flow, hints = beginner lint
 run(files_json, main, mode, answers_json, seed)
                          -> JSON {files, timeline, error, need_input, gui}: values / hit counts per line plus a step timeline,
                             recorded with sys.settrace
+gui_event / gui_tick / gui_pump / gui_stop / gui_libs
+                         -> the page talking to a GUI library's window (tkinter, turtle) after run() returned
 """
-import ast, builtins, doctest, importlib, json, os, random, re, shutil, sys, tempfile, traceback, types, unittest
+import ast, builtins, importlib, json, os, random, re, shutil, sys, tempfile, traceback, types
 
 try:
-    import js  # only inside Pyodide: used to hand tkinter windows to the page
+    import js  # only inside Pyodide: used to hand GUI windows to the page
 except ImportError:
     js = None
 
-ALLOWED = ("random", "math", "time", "doctest", "tkinter", "unittest", "enum")
+ALLOWED = ()  # import names of the registered libraries, set by configure()
+MODES = {}  # run modes added by libraries: id -> fn(module)
+GUI = {}  # GUI backends added by libraries: lib name -> hooks (reset, finish, active, dispatch, tick, pump, set_post, exit)
 MUTATORS = {"append", "extend", "insert", "remove", "pop", "clear", "sort", "reverse", "update", "add", "discard", "setdefault", "popitem"}
 SHADOW = {"list", "dict", "set", "str", "int", "float", "sum", "max", "min", "len", "input", "print", "range", "type", "id", "sorted",
           "abs", "round", "all", "any", "map", "filter", "zip", "open", "next", "iter", "format", "tuple", "bool", "object", "chr", "ord"}
@@ -291,16 +295,6 @@ def analyze(src, mods_json="[]"):
 
 # ---------------------------------------------------------------- running
 
-_ttr_init = unittest.TextTestRunner.__init__
-
-
-def _ttr_stdout(self, stream=None, *a, **k):  # unittest writes to stderr by default, which the console shows in red
-    _ttr_init(self, sys.stdout if stream is None else stream, *a, **k)
-
-
-unittest.TextTestRunner.__init__ = _ttr_stdout
-
-
 class StepLimit(BaseException):
     pass
 
@@ -316,7 +310,9 @@ class NeedInput(BaseException):  # input() with no queued answer: the page asks 
 def short(v, n=40, d=0):
     try:
         r = repr(v)
-        if d < 1 and r.startswith("<") and " object at 0x" in r and hasattr(v, "__dict__"):
+        if r.startswith("<") and " object at 0x" in r and type(v).__module__.endswith("_lib"):
+            r = f"<{type(v).__name__}>"  # an object from a library (turtle, tkinter widget): its internals are noise
+        elif d < 1 and r.startswith("<") and " object at 0x" in r and hasattr(v, "__dict__"):
             r = f"{type(v).__name__}(" + ", ".join(f"{k}={short(x, 14, d + 1)}" for k, x in vars(v).items()) + ")"
         else:
             r = re.sub(r" at 0x[0-9a-f]+", "", r)
@@ -343,20 +339,28 @@ def snap(frame, names, store, key):
     return got
 
 
-_LIVE = {}  # a tkinter window outlives run(): its callbacks run later, so we keep what they need (see tk_event)
-TK = {}  # the tkinter look-alike's namespace, filled by tk_install()
+_LIVE = {}  # a GUI window outlives run(): its callbacks run later, so we keep what they need (see gui_call)
 
 
-def tk_install(src):
-    ns = {"__name__": "tkshim"}
-    exec(compile(src, "<tkshim>", "exec"), ns)
-    ns["install"]()
-    if js is not None:
-        ns["set_post"](lambda s: js.tkPost(s))
-    TK.update(ns)
+def configure(allowed_json):
+    global ALLOWED
+    ALLOWED = tuple(json.loads(allowed_json))
 
 
-def tk_cleanup():
+def load_lib(name, src):
+    ns = {"__name__": name + "_lib"}
+    exec(compile(src, f"<lib {name}>", "exec"), ns)
+    if "install" in ns:
+        ns["install"]()  # e.g. register fake modules in sys.modules
+    MODES.update(ns.get("run_modes", {}))
+    hooks = ns.get("gui_hooks")
+    if hooks:
+        GUI[name] = hooks
+        if js is not None:
+            hooks["set_post"](lambda s: js.guiPost(name, s))
+
+
+def gui_cleanup():
     if _LIVE:
         shutil.rmtree(_LIVE.get("root"), ignore_errors=True)
         for m in _LIVE.get("mods", ()):
@@ -365,12 +369,12 @@ def tk_cleanup():
 
 
 def run(files_json, main, mode="run", answers_json="[]", seed=0):
-    """Run 'main' (as __main__, or as a module + doctest / unittest when mode says so) with line tracing."""
+    """Run 'main' with line tracing: as __main__, or (for a mode added by a library, e.g. doctest) as a module handed to that mode."""
     files, answers = json.loads(files_json), json.loads(answers_json)
     random.seed(seed)  # same seed on every re-run, so replaying input() answers repeats the same random numbers
-    if TK:
-        TK["reset"]()  # closes any window left by the previous run
-    tk_cleanup()
+    for g in GUI.values():
+        g["reset"]()  # closes any window left by the previous run
+    gui_cleanup()
     root = tempfile.mkdtemp()
     mods = {n[:-3] for n in files if n.endswith(".py")}
     names = list(files)
@@ -470,7 +474,8 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
 
     def fail(e):
         te = traceback.TracebackException.from_exception(e)
-        te.stack = traceback.StackSummary.from_list([f for f in te.stack if f.filename != fail.__code__.co_filename])  # hide runner frames
+        me = analyze.__code__.co_filename
+        te.stack = traceback.StackSummary.from_list([f for f in te.stack if f.filename != me and not f.filename.startswith("<lib ")])  # hide our own frames
         sys.stderr.write("".join(te.format()))
         loc = None
         for fr, ln in traceback.walk_tb(e.__traceback__):
@@ -511,11 +516,8 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
     enter()
     try:
         exec(compile(files[main], mod.__file__, "exec"), mod.__dict__)
-        if mode == "doctest":
-            r = doctest.testmod(mod, verbose=False)
-            print(f"doctest: {r.attempted} run, {r.failed} failed" if r.attempted else "doctest: no >>> examples found in docstrings")
-        elif mode == "unittest":
-            unittest.main(module=mod, argv=["unittest"], exit=False, verbosity=2)
+        if mode in MODES:
+            MODES[mode](mod)
     except (StepLimit, OutputLimit) as e:
         sys.stderr.write(f"{e}\n")
         err = {"file": cur[0], "line": cur[1], "msg": str(e)} if cur[0] else None
@@ -524,12 +526,12 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
     except SystemExit:
         pass
     except BaseException as e:
-        if TK and isinstance(e, TK["_MainloopExit"]):
-            pass  # root.mainloop(): the window stays open and its callbacks run later (tk_event)
+        if any(isinstance(e, g["exit"]) for g in GUI.values()):
+            pass  # root.mainloop(): the window stays open and its callbacks run later (gui_event)
         else:
             err = fail(e)
     finally:
-        gui = bool(TK) and not need and TK["active"]()
+        gui = not need and any(g["active"]() for g in GUI.values())
         leave()
         if gui:
             def reset():
@@ -539,8 +541,8 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
 
             _LIVE.update(enter=enter, leave=leave, reset=reset, T=T, step=step, root=root, mods=mods)
         else:
-            if TK:
-                TK["finish"]()  # the script ended without mainloop(): its windows close, like real Tk
+            for g in GUI.values():
+                g["finish"]()  # the script ended without mainloop(): its windows close, like real Tk
             for m in mods | {"__main__"}:
                 sys.modules.pop(m, None)
             shutil.rmtree(root, ignore_errors=True)
@@ -548,16 +550,17 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
                        "timeline": {"files": names, "steps": steps, "facts": facts, "trunc": over[0]}})
 
 
-def tk_reply(touched=False):
-    out = TK["pump"]()
+def gui_reply(lib, touched=False):
+    out = GUI[lib]["pump"]()
+    out["lib"] = lib
     if _LIVE and touched:
         out["files"] = _LIVE["T"]  # callbacks ran, so the node map's values have changed
-    if not out["alive"]:
-        tk_cleanup()
+    if not any(g["active"]() for g in GUI.values()):
+        gui_cleanup()
     return json.dumps(out)
 
 
-def tk_call(fn):
+def gui_call(lib, fn):
     """Run something that executes user callbacks (a window event, an after() timer) inside the same sandbox as run()."""
     live = _LIVE
     if live:
@@ -570,29 +573,32 @@ def tk_call(fn):
     except (StepLimit, OutputLimit) as e:
         sys.stderr.write(f"{e}\n")
     except BaseException as e:
-        if not isinstance(e, TK["_MainloopExit"]):
+        if not any(isinstance(e, g["exit"]) for g in GUI.values()):
             sys.stderr.write("".join(traceback.format_exception_only(type(e), e)))
     finally:
         touched = bool(live) and live["step"][0] > 0
         if live:
             live["leave"]()
-    return tk_reply(touched)
+    return gui_reply(lib, touched)
 
 
-def tk_event(s):
-    return tk_call(lambda: TK["dispatch"](json.loads(s)))
+def gui_event(lib, s):
+    return gui_call(lib, lambda: GUI[lib]["dispatch"](json.loads(s)))
 
 
-def tk_tick():
-    return tk_call(TK["tick"])
+def gui_tick(lib):
+    return gui_call(lib, GUI[lib]["tick"])
 
 
-def tk_pump():
-    return tk_reply()
+def gui_pump(lib):
+    return gui_reply(lib)
 
 
-def tk_stop():  # close any window and drop its timers (the page replaced the project)
-    if TK:
-        TK["reset"]()
-    tk_cleanup()
-`;
+def gui_libs():
+    return json.dumps(list(GUI))
+
+
+def gui_stop():  # close every window and drop its timers (the page replaced the project)
+    for g in GUI.values():
+        g["reset"]()
+    gui_cleanup()

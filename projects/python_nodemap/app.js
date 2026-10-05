@@ -1,7 +1,7 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const STORE = 'python_nodemap.v1', PREFS = 'python_nodemap.prefs';
-const PYODIDE = 'https://cdn.jsdelivr.net/pyodide/v0.29.5/full/'; // 0.29 (Python 3.13): works in classic blob workers, so also from file://
+const PYODIDE = 'https://cdn.jsdelivr.net/pyodide/v0.29.5/full/'; // pinned: Pyodide 314+ only supports module workers; 0.29 (Python 3.13) works in our classic Blob worker
 // unpacked sizes of what Pyodide downloads (about 5 MB over the wire), used for the progress bar. Re-measure if PYODIDE changes.
 const PYODIDE_SIZES = { 'pyodide.asm.wasm': 8647684, 'python_stdlib.zip': 2424003, 'pyodide.asm.js': 1074322, 'pyodide-lock.json': 122027 };
 let ready = false; // Python finished loading
@@ -84,7 +84,7 @@ const setStatus = t => { $('#st').textContent = t; };
 const modsOf = () => Object.keys(S.files).map(f => f.slice(0, -3)).sort();
 const okName = n => /^[A-Za-z_]\w*\.py$/.test(n);
 
-// ---- Python lives in a worker (worker.js + runner.js), so the page never freezes and Stop works
+// ---- Python lives in a worker (worker.js + runner.py + libs/*/lib.py), so the page never freezes and Stop works
 const W = {
   n: 0, pend: new Map(), onOut: () => {}, onProgress: () => {},
   call(type, data) {
@@ -101,14 +101,15 @@ const W = {
     W.w.onmessage = ({ data: m }) => {
       if (m.type === 'out') return W.onOut(m.text, m.cls);
       if (m.type === 'progress') return W.onProgress(m.loaded, m.total);
-      if (m.type === 'tk') return TkView.apply(m.tree);
+      if (m.type === 'gui') return PyLibs.view(m.lib)?.apply(m.tree);
       if (m.type === 'trace') return liveTrace(m.files);
       const p = W.pend.get(m.id);
       W.pend.delete(m.id);
       if (p) m.error ? p.rej(new Error(m.error)) : p.res(m.result);
     };
     W.w.onerror = e => out(`Python worker error: ${e.message || e}\n`, 'err');
-    W.ready = W.call('init', { url: PYODIDE, runner: RUNNER_PY, tk: TK_PY, sizes: PYODIDE_SIZES });
+    W.src ??= Promise.all([fetchText('runner.py'), PyLibs.load()]); // fetched once; a restart (Stop) reuses it
+    W.ready = W.src.then(([runner, libs]) => W.call('init', { url: PYODIDE, runner, libs, allowed: PyLibs.names(), sizes: PYODIDE_SIZES }));
     W.ready.catch(() => {});
   },
   restart() { // Stop: killing the worker is the only way to interrupt running Python
@@ -332,11 +333,13 @@ function draw() {
     err: S.error?.file === S.active ? S.error.line : null,
     light: P.light,
   });
+  const [sx, sy] = [box.scrollLeft, box.scrollTop];
   box.innerHTML = b.svg;
+  box.scrollLeft = sx; box.scrollTop = sy; // replacing the content must not send the map back to the top (browsers differ)
   S.dim = b;
   applyZoom();
   mark();
-  if (S.step != null) box.querySelector('.node.now')?.scrollIntoView({ block: 'center', inline: 'nearest' });
+  if (S.step != null) reveal(box.querySelector('.node.now'), true);
 }
 const curZoom = () => (P.zoom === 'fit' && S.dim ? Math.min(1.5, ($('#map').clientWidth - 4) / S.dim.w) : +P.zoom || 1);
 function applyZoom() {
@@ -377,11 +380,17 @@ function paint() { // highlight state: search hits, else the hovered / cursor no
   svg.classList.toggle('f', !!hit || id != null);
   svg.querySelectorAll('.wire').forEach(w => w.classList.toggle('on', hit ? w.dataset.l.toLowerCase().includes(q) : id != null && (+w.dataset.a === id || +w.dataset.b === id)));
 }
+function reveal(el, center) { // Element.scrollIntoView() does nothing for SVG in Firefox, so scroll the map ourselves
+  if (!el) return;
+  const box = $('#map'), r = el.getBoundingClientRect(), m = box.getBoundingClientRect();
+  box.scrollTop += center ? r.top + r.height / 2 - (m.top + m.height / 2) : r.top < m.top ? r.top - m.top : r.bottom > m.bottom ? r.bottom - m.bottom : 0;
+  box.scrollLeft += r.left < m.left ? r.left - m.left : r.right > m.right ? r.right - m.right : 0;
+}
 function mark(scroll) {
   const g = S.graph[S.active];
   act = g ? NodeMap.nodeAt(g, cm.getCursor().line + 1)?.id ?? null : null;
   paint();
-  if (scroll) $('#map .node.act')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  if (scroll) reveal($('#map .node.act'));
 }
 $('#map').addEventListener('mouseover', e => {
   const id = e.target.closest('.node')?.dataset.id;
@@ -407,7 +416,7 @@ $('#q').oninput = () => { qi = 0; paint(); };
 $('#q').onkeydown = e => {
   if (e.key !== 'Enter') return;
   const hits = [...document.querySelectorAll('#map .node.hit')];
-  if (hits.length) hits[qi++ % hits.length].scrollIntoView({ block: 'center', inline: 'nearest' });
+  if (hits.length) reveal(hits[qi++ % hits.length], true);
 };
 
 // ---- preferences: theme, font size, wire filters
@@ -472,13 +481,13 @@ $('#s-play').onclick = () => {
 // Python can't block waiting for input() in a worker without special server headers, so input() asks for the answer
 // and the page re-runs the program from the top, feeding it the answers collected so far (random is seeded the same).
 let job = null;
-const setRunning = on => { $('#run').disabled = $('#doctest').disabled = $('#unittest').disabled = on || !ready; $('#stop').hidden = !on; };
+const setRunning = on => { document.querySelectorAll('#run, .runmode').forEach(b => { b.disabled = on || !ready; }); $('#stop').hidden = !on; };
 async function run(mode = 'run') {
   if (job || !ready) return;
   stopPlay();
   S.tl = null; S.step = null; S.error = null;
   showMarks(); updateStepper(); draw();
-  TkView.closeAll();
+  PyLibs.closeViews();
   job = { files: { ...S.files }, main: S.active, mode, answers: [], seed: Math.floor(Math.random() * 2 ** 31) };
   S.ranFiles = { ...S.files };
   $('#out').textContent = '';
@@ -529,7 +538,7 @@ function stop() {
   if (!job) return;
   job = null;
   $('#inrow').hidden = true;
-  TkView.closeAll();
+  PyLibs.closeViews();
   W.restart();
   out('\n■ stopped\n', 'dim');
   setRunning(false);
@@ -537,8 +546,11 @@ function stop() {
   W.ready.then(() => { setStatus('Ready'); refresh(); });
 }
 $('#run').onclick = () => run();
-$('#doctest').onclick = () => run('doctest');
-$('#unittest').onclick = () => run('unittest');
+for (const m of PyLibs.modes()) { // the extra run buttons that libraries add (Doctest, Tests ...)
+  const b = Object.assign(document.createElement('button'), { className: 'pri runmode', textContent: m.label, title: m.title, disabled: true });
+  b.onclick = () => run(m.id);
+  $('#modes').append(b);
+}
 $('#stop').onclick = stop;
 
 // a tkinter window keeps running after the script returned; its callbacks update the node map's values
@@ -549,7 +561,7 @@ function liveTrace(files) {
   clearTimeout(liveT);
   liveT = setTimeout(() => { if (S.step == null) draw(); }, 120);
 }
-TkView.setSend(ev => W.w.postMessage({ type: 'tkevent', ev }));
+PyLibs.views().forEach(l => l.view.setSend(ev => W.w.postMessage({ type: 'guievent', lib: l.name, ev })));
 
 // ---- import / export / share
 const download = (blob, name) => {
@@ -571,8 +583,8 @@ function replaceProject(got) { // a zip or a share link is a whole project: ever
   if (job) stop();
   const names = Object.keys(got).sort();
   stopPlay();
-  TkView.closeAll();
-  W.w.postMessage({ type: 'tkreset' }); // a window left open by the old project would keep running
+  PyLibs.closeViews();
+  W.w.postMessage({ type: 'guireset' }); // a window left open by the old project would keep running
   S.files = { ...got };
   for (const n of Object.keys(docs)) delete docs[n];
   Object.assign(S, { trace: {}, graph: {}, key: {}, err: {}, hints: {}, fold: {}, tl: null, step: null, views: null, error: null, ranFiles: null });
@@ -667,6 +679,7 @@ drag($('#vsplit'), e => document.body.style.setProperty('--map-w', Math.max(240,
 drag($('#hsplit'), e => document.body.style.setProperty('--con-h', Math.max(60, innerHeight - 22 - e.clientY) + 'px'));
 
 // ---- go
+$('#libs').textContent = 'Python · ' + PyLibs.names().join(', ');
 cm.swapDoc(docOf(S.active));
 chrome();
 applyPrefs();
@@ -687,7 +700,10 @@ W.ready.then(() => {
   refresh();
 }, e => {
   setStatus('Python failed to load');
-  $('#map').innerHTML = '<div class="empty">Could not load Python. Check your connection and reload.</div>';
-  out(`Could not load Python: ${e.message || e}\nThis page needs internet access to cdn.jsdelivr.net (Pyodide) and cdnjs.cloudflare.com (editor, zip).\n`, 'err');
+  const disk = location.protocol === 'file:';
+  $('#map').innerHTML = `<div class="empty">${disk ? 'This page has to be served, not opened from disk (see the console).' : 'Could not load Python. Check your connection and reload.'}</div>`;
+  out(`Could not load Python: ${e.message || e}\n`, 'err');
+  out(disk ? 'You opened this page straight from disk, which the browser blocks. Serve the folder instead: run "python -m http.server" in it and open http://localhost:8000/ (see the README).\n'
+    : 'This page needs internet access to cdn.jsdelivr.net (Pyodide) and cdnjs.cloudflare.com (editor, zip).\n', 'err');
 });
 loadShared();

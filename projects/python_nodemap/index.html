@@ -28,20 +28,7 @@
                 hidden>
                 ■ Stop
             </button>
-            <button
-                id="doctest"
-                class="pri"
-                title="Import this file and run its doctests"
-                disabled>
-                ✔ Doctest
-            </button>
-            <button
-                id="unittest"
-                class="pri"
-                title="Import this file and run its unittest tests"
-                disabled>
-                ☑ Tests
-            </button>
+            <span id="modes"></span>
             <span class="sp"></span>
             <button id="font-down" title="Smaller text">A−</button>
             <button id="font-up" title="Larger text">A+</button>
@@ -181,10 +168,7 @@
             <span id="probs" title=""></span>
             <span class="sp"></span>
             <span id="pos"></span>
-            <span
-                >Python · random, math, time, doctest, tkinter, unittest,
-                enum</span
-            >
+            <span id="libs"></span>
         </footer>
 
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
@@ -198,10 +182,14 @@
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/search.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-        <script src="runner.js"></script>
-        <script src="tkshim.js"></script>
+        <script src="libs.js"></script>
+        <!-- one line per library: add yours here (after any library it builds on). See docs/ADDING_A_LIBRARY.md -->
+        <script src="libs/stdlib/lib.js"></script>
+        <script src="libs/doctest/lib.js"></script>
+        <script src="libs/unittest/lib.js"></script>
+        <script src="libs/tkinter/lib.js"></script>
+        <script src="libs/turtle/lib.js"></script>
         <script src="worker.js"></script>
-        <script src="tkview.js"></script>
         <script src="nodemap.js"></script>
         <script src="complete.js"></script>
         <script src="app.js"></script>

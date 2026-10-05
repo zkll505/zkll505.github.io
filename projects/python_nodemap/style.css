@@ -221,7 +221,7 @@ body.light .pbar { background: #dfe5ef; }
 .tk-labelframe legend { padding: 0 4px; }
 .tk-sep { height: 1px; background: #bbb; margin: 2px 0; align-self: stretch; }
 .tk-progress { height: 14px; }
-.tk-canvas { display: block; }
+.tk-canvas { display: block; outline: none; }
 
 .tkdialog { position: fixed; inset: 0; pointer-events: auto; background: rgba(0, 0, 0, .25); display: flex; align-items: center; justify-content: center; z-index: 70; }
 .tkdbox { background: #f0f0f0; color: #000; border: 1px solid #555; min-width: 260px; max-width: 80vw; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); font: 9pt "Segoe UI", Tahoma, sans-serif; }

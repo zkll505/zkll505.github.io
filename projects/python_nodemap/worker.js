@@ -1,9 +1,10 @@
 /* Runs Pyodide in a Web Worker so the page never freezes and Stop can kill a run.
-   app.js turns this function's source into a Blob worker; that also works from file://, unlike new Worker('worker.js').
-   It must stay self-contained (no outside variables). */
+   app.js turns this function's source into a Blob worker, so it can't use outside variables.
+   Messages in:  init {url, runner, libs, allowed, sizes} | analyze | run | guievent {lib, ev} | guireset
+   Messages out: out {cls, text} | progress | gui {lib, tree} (tree null = close the windows) | trace {files} | {id, result|error} */
 function workerMain() {
-  let api, cur = null, last = 0, tkTimer = null;
-  const NO_WINDOWS = { wins: [], dialogs: [], wants: [], focus: null };
+  let api, cur = null, last = 0;
+  const timers = {}; // one after()-timer per GUI library
   const flush = () => {
     if (cur) postMessage({ type: 'out', cls: cur.cls, text: cur.text });
     cur = null;
@@ -17,24 +18,25 @@ function workerMain() {
   };
   const stream = cls => { const d = new TextDecoder(); return { write: b => (emit(cls, d.decode(b, { stream: true })), b.length) }; };
 
-  // tkinter windows: Python posts the widget tree; timers (after()) and window events are driven from here
-  self.tkPost = s => postMessage({ type: 'tk', tree: JSON.parse(s) });
-  const tkReply = json => {
+  // GUI libraries (tkinter, turtle): Python posts the window's tree; timers and window events are driven from here
+  self.guiPost = (lib, s) => postMessage({ type: 'gui', lib, tree: JSON.parse(s) });
+  const guiReply = json => {
     const o = JSON.parse(json);
-    if (o.tree) postMessage({ type: 'tk', tree: o.tree });
+    if (o.tree) postMessage({ type: 'gui', lib: o.lib, tree: o.tree });
     if (o.files) postMessage({ type: 'trace', files: o.files });
     flush();
-    clearTimeout(tkTimer);
-    if (o.alive && o.next != null) tkTimer = setTimeout(() => tkReply(api.tk_tick()), Math.max(0, o.next));
+    clearTimeout(timers[o.lib]);
+    if (o.alive && o.next != null) timers[o.lib] = setTimeout(() => guiReply(api.gui_tick(o.lib)), Math.max(0, o.next));
   };
+  const libs = () => JSON.parse(api.gui_libs());
+  const closeWindows = () => libs().forEach(lib => { clearTimeout(timers[lib]); postMessage({ type: 'gui', lib, tree: null }); });
 
   onmessage = async ({ data: m }) => {
     try {
-      if (m.type === 'tkevent') return tkReply(api.tk_event(JSON.stringify(m.ev)));
-      if (m.type === 'tkreset') { // the project was replaced: stop the window, and tell the page so a tree already in flight can't revive it
-        clearTimeout(tkTimer);
-        if (api) api.tk_stop();
-        return postMessage({ type: 'tk', tree: NO_WINDOWS });
+      if (m.type === 'guievent') return guiReply(api.gui_event(m.lib, JSON.stringify(m.ev)));
+      if (m.type === 'guireset') { // the project was replaced: stop the windows, and tell the page so a tree already in flight can't revive them
+        if (api) { api.gui_stop(); closeWindows(); }
+        return;
       }
       let result;
       if (m.type === 'init') {
@@ -61,16 +63,16 @@ function workerMain() {
         ns.set('__name__', 'nm_runner'); // own namespace, so the import guard never treats runner code as user code
         py.runPython(m.runner, { globals: ns });
         api = {};
-        for (const f of ['analyze', 'run', 'tk_install', 'tk_event', 'tk_tick', 'tk_pump', 'tk_stop']) api[f] = ns.get(f);
-        api.tk_install(m.tk);
+        for (const f of ['configure', 'load_lib', 'analyze', 'run', 'gui_event', 'gui_tick', 'gui_pump', 'gui_stop', 'gui_libs']) api[f] = ns.get(f);
+        api.configure(JSON.stringify(m.allowed));
+        for (const l of m.libs) api.load_lib(l.name, l.src); // in the order the libraries were registered
       } else if (m.type === 'analyze') {
         result = api.analyze(m.src, JSON.stringify(m.mods));
       } else if (m.type === 'run') {
-        clearTimeout(tkTimer);
-        postMessage({ type: 'tk', tree: NO_WINDOWS }); // the previous program's window must not outlive this run
+        closeWindows(); // the previous program's windows must not outlive this run (also covers a tree already in flight)
         result = api.run(JSON.stringify(m.files), m.main, m.mode, JSON.stringify(m.answers), m.seed);
         flush();
-        tkReply(api.tk_pump()); // a window left open by mainloop(): start its timers
+        libs().forEach(lib => guiReply(api.gui_pump(lib))); // a window left open by mainloop(): start its timers
       }
       postMessage({ id: m.id, result });
     } catch (e) {

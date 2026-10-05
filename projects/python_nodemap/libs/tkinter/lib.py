@@ -1,11 +1,9 @@
-/* A small tkinter look-alike for the browser (real Tk can't run in a browser). It is Python, kept as a JS string like runner.js.
-   The widgets are plain Python objects; every change marks the tree dirty, and tkview.js draws the tree in a floating window.
-   Events from the page come back through dispatch(). test_runner.py extracts and tests this file. */
-const TK_PY = String.raw`"""tkinter look-alike. Supported: Tk/Toplevel, Frame, LabelFrame, Label, Message, Button, Entry, Text, Checkbutton, Radiobutton,
+"""tkinter look-alike. Supported: Tk/Toplevel, Frame, LabelFrame, Label, Message, Button, Entry, Text, Checkbutton, Radiobutton,
 Scale, Spinbox, Listbox, Canvas, Menu, OptionMenu, ttk.Combobox/Progressbar/Separator, StringVar/IntVar/DoubleVar/BooleanVar,
 pack/grid/place, bind, after, update, messagebox, simpledialog (answers immediately), font.Font.
 Not supported: images, file dialogs, Text tags, scrollbars (widgets scroll by themselves), ttk themes/Notebook/Treeview.
-mainloop() ends the script; the window stays open and its callbacks run when you click, type or a timer fires."""
+A window that was shown stays open after the script ends (like IDLE/Thonny) and its callbacks run when you click, type or a timer fires.
+mainloop() ends the script (code after it never runs)."""
 import itertools, json, re, sys, time, traceback, types
 
 
@@ -19,7 +17,7 @@ class _MainloopExit(BaseException):
 
 _ids = itertools.count(1)
 _ST = {"roots": [], "dirty": False, "after": [], "afterid": 0, "dialogs": [], "focus": None, "fn": 0, "shown": False,
-       "post": None, "notes": set(), "all": {}, "main": False}
+       "post": None, "notes": set(), "all": {}, "flushed": 0.0}
 _REG = {}
 
 NO = FALSE = OFF = 0
@@ -642,14 +640,15 @@ class Misc:
     def update(self):
         _ST["shown"] = True
         _tick()
-        _flush()
+        if time.monotonic() - _ST["flushed"] > 0.016:  # a loop calling update() thousands of times shouldn't post a frame each time
+            _flush()
 
     def update_idletasks(self):
         _ST["shown"] = True
         _flush()
 
     def mainloop(self, n=0):
-        _ST["shown"] = _ST["main"] = True
+        _ST["shown"] = True
         _flush()
         raise _MainloopExit()
 
@@ -1568,6 +1567,7 @@ def _snapshot():
 
 def _flush():
     if (_ST["dirty"] or _ST["dialogs"]) and _ST["post"] and (_ST["shown"] or _ST["dialogs"]):
+        _ST["flushed"] = time.monotonic()
         _ST["post"](json.dumps(_snapshot()))
 
 
@@ -1618,22 +1618,24 @@ def pump():
     return out
 
 
-def active():  # a window that stays open after the script returned (it called mainloop())
-    return _ST["main"] and any(r._alive for r in _ST["roots"])
+def active():  # a window that was shown stays open after the script ended (like IDLE / Thonny), until closed or the next run
+    return _ST["shown"] and any(r._alive for r in _ST["roots"])
 
 
-def finish():  # the script ended without mainloop(): like real Tk, its windows vanish with the process
+def finish():  # the script ended and no window was ever shown: drop the unused windows, but still show pending dialogs
     _destroy_all()
     _flush()
 
 
 def reset():
+    for r in _ST["roots"]:
+        r._alive = False  # libraries that keep a window around between runs (turtle's Screen) must see that it is gone
     _ST["roots"].clear()
     _ST["after"].clear()
     _ST["dialogs"].clear()
     _ST["all"].clear()
     _ST["notes"].clear()
-    _ST.update(dirty=False, focus=None, shown=False, main=False)
+    _ST.update(dirty=False, focus=None, shown=False)
     _REG.clear()
 
 
@@ -1704,4 +1706,8 @@ def install():
     tk = mod("tkinter", __getattr__=getattr_, __path__=[], **tkpub)
     tk.__all__ = sorted(tkpub)
     sys.modules["_tkinter"] = mod("_tkinter", TclError=TclError)
-`;
+
+
+# What runner.py needs from a GUI library (docs/ADDING_A_LIBRARY.md): it drives the window's life after run() returned.
+gui_hooks = {"reset": reset, "finish": finish, "active": active, "dispatch": dispatch, "tick": tick, "pump": pump,
+             "set_post": set_post, "exit": _MainloopExit}
