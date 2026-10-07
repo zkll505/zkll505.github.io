@@ -9,7 +9,7 @@ No server, no install, no account: Python runs in the browser ([Pyodide](https:/
 your browser's `localStorage`.
 
 **Contents:** [Features](#features) · [Run it](#run-it) · [Using it](#using-it) · [Reading the node map](#reading-the-node-map) ·
-[Libraries](#libraries) · [Limits](#limits) · [Troubleshooting](#troubleshooting) · [Privacy](#privacy) ·
+[Libraries](#libraries) · [Limits](#limits) · [Troubleshooting](#troubleshooting) · [Feedback](#feedback) · [Privacy](#privacy) ·
 [How it works](#how-it-works-short-version) · [Tests](#tests) · [Contributing](#contributing) · [License](#license)
 
 ## Features
@@ -145,11 +145,16 @@ Each library, what it supports and what it doesn't: [libs/README.md](libs/README
 | A window won't go away | Close it with its ✕ or press **Run** (a new run closes the old windows). |
 | Keys or clicks do nothing in a running animation | They travel through the service worker (`sw.js`), which needs https or `localhost` and isn't available in Firefox private windows. The loop must also call `update()` (`turtle.update()`, `screen.update()`, `root.update()`) so the program can see them. Ctrl+F5 skips the service worker for that visit; reload normally. |
 
+## Feedback
+
+The **Feedback** link in the toolbar opens [the feedback form](https://forms.gle/yK2p1S2hzGKyzfm78) in a new tab. Bug reports and
+ideas are just as welcome as issues on the repository.
+
 ## Privacy
 
 Nothing you write leaves your browser. The page downloads Pyodide, CodeMirror and JSZip from public CDNs (so those hosts see an
 ordinary page load), your files are kept in `localStorage`, and a share link carries the project in the URL fragment, which
-browsers never send to a server.
+browsers never send to a server. The Feedback link only opens a Google Form in a new tab; nothing is sent unless you submit it.
 
 ## How it works (short version)
 

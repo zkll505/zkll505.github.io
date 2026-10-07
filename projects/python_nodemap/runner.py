@@ -246,17 +246,24 @@ def analyze(src, mods_json="[]"):
 
     build(tree.body, None, -1, None, None)
 
-    def loop_of(n):
-        """The innermost for/while loop around node n inside its own function (None if there is none)."""
+    def loops_of(n):
+        """Every for/while loop around node n inside its own function, innermost first (a while loop is around its own header)."""
         p = n["id"] if n["kind"] == "while" else n["parent"]
+        found = []
         while p is not None and nodes[p]["kind"] not in ("def", "class"):
             if nodes[p]["kind"] in ("for", "while"):
-                return nodes[p]
+                found.append(nodes[p])
             p = nodes[p]["parent"]
+        return found
+
+    def loop_of(n):
+        """The innermost loop around node n (None if there is none)."""
+        return next(iter(loops_of(n)), None)
 
     def sources(n, name):
         """ids of nodes whose definition of 'name' reaches n.
-        ponytail: flow-insensitive, nearest earlier definition (+ one loop-carried one); branches aren't merged."""
+        ponytail: flow-insensitive, nearest earlier definition (+ a loop-carried one per enclosing loop, which may be n itself: `total = add(total, i)`
+        in a loop feeds itself on the next repeat); branches aren't merged."""
         if "." in name:
             chain = [n["cls"]]
         elif name in glob.get(n["scope"], ()):
@@ -273,9 +280,8 @@ def analyze(src, mods_json="[]"):
             ids = tabs.get(sc, {}).get(name)
             if ids:
                 out = [i for i in ids if i < n["id"]][-1:] or ids[:1]
-                lp = loop_of(n)
-                if lp:
-                    out += [i for i in ids if n["id"] < i <= lp["last"]][-1:]
+                for lp in loops_of(n):  # a value made later in ANY enclosing loop reaches n on that loop's next repeat
+                    out += [i for i in ids if n["id"] <= i <= lp["last"]][-1:]  # (<=: a statement can feed itself on the next repeat)
                 return list(dict.fromkeys(out))
         return []
 
@@ -283,9 +289,9 @@ def analyze(src, mods_json="[]"):
 
     def wire(a, b, kind, label, **kw):
         """Add a wire a -> b. The same wire in the opposite direction merges into one two-way wire."""
-        if a == b:
+        if a == b and not kw.get("back"):  # only a loop-carried value may come back to the statement that made it
             return
-        r = wires.get((b, a, kind, label))
+        r = wires.get((b, a, kind, label)) if a != b else None
         if r:
             r["two"] = True  # both directions -> one two-way wire
         else:
@@ -309,7 +315,9 @@ def analyze(src, mods_json="[]"):
         for name in n["uses"]:
             if name not in called:
                 for i in sources(n, name):
-                    wire(i, n["id"], "data", name, back=i > n["id"])
+                    if i == n["id"] and not loop_of(n):
+                        continue  # outside a loop, a statement's own "earlier" value is just a use before assignment (hinted below)
+                    wire(i, n["id"], "data", name, back=i >= n["id"])
 
     # beginner hints that need the definition tables
     for n in nodes:

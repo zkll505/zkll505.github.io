@@ -68,7 +68,14 @@ def analyze():
     g = json.loads(runner.analyze(SRC))
     N, text = g["nodes"], lambda s: next(n["id"] for n in g["nodes"] if n["text"].startswith(s))
     W = lambda a, b, kind, label=None: [w for w in g["wires"] if (w["from"], w["to"], w["kind"]) == (text(a), text(b), kind) and label in (None, w["label"])]
-    assert W("total = add", "total = add", "data") == [], "no self wire"
+    selfw = W("total = add", "total = add", "data", "total")
+    assert len(selfw) == 1 and selfw[0]["back"], "in a loop, an accumulator feeds itself on the next repeat (a loop-carried wire from the box to itself)"
+    assert not [w for w in json.loads(runner.analyze("x = 1\nx = x + 1\nprint(x)\n"))["wires"] if w["from"] == w["to"]], "no self wire outside a loop"
+    wl = json.loads(runner.analyze("n = 3\nwhile n > 0:\n    n -= 1\n"))
+    assert any(w["from"] == w["to"] and w["back"] and w["label"] == "n" for w in wl["wires"]), "n -= 1 loops back into itself"
+    nested = json.loads(runner.analyze("i = 0\nwhile i < 3:\n    for j in range(2):\n        print(i, j)\n    i += 1\n"))
+    texts = {n["id"]: n["text"] for n in nested["nodes"]}
+    assert any(w["back"] and texts[w["from"]] == "i += 1" and texts[w["to"]] == "print(i, j)" for w in nested["wires"]), "a value changed by the OUTER loop reaches the inner loop"
     assert W("total = 0", "for i", "data") == [] and W("total = 0", "total = add", "data", "total")
     assert W("for i", "total = add", "data", "i")                       # loop var flows into body
     w = W("total = add", "def add", "call")[0]

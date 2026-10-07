@@ -80,7 +80,8 @@ updates while you type (debounced, and re-analysis is skipped when neither the c
   sibling of its `if`; `else:`/`finally:` are small pseudo-nodes. `show` lists the names a node defines (its value box).
 - **Wires**: for each name a statement uses, `sources()` finds the definition that reaches it: the nearest earlier one in the
   same scope chain (class scopes are skipped from inside methods, `global` is honoured, `self.x` is a name shared across a
-  class's methods), plus one loop-carried definition. A call to a function/class/method becomes a `call` wire (`two: true`
+  class's methods), plus, for each enclosing loop, one loop-carried definition (the last one later in that loop, which may be the statement itself, as in
+  `total = add(total, i)`). A call to a function/class/method becomes a `call` wire (`two: true`
   when the function returns a value). This is deliberately **flow-insensitive**: branches that both assign a name only show the
   last one.
 - **Hints**: lint rules that reuse the same tables (unused variable, use before assignment, missing `return`, ...).
@@ -114,7 +115,7 @@ it to that library's function instead of running it as `__main__`.
 
 ## The node map
 
-`NodeMap.build` lays nodes out in one vertical column in source order; containers nest. Wires never cross a box: each leaves
+`NodeMap.build` lays nodes out in one vertical column in source order; containers nest. A wire from a box back to itself (a loop-carried accumulator) is just a short loop round that box and takes no lane. Wires never cross a box: each leaves
 the source's right edge, runs down a gutter *lane*, crosses the gap above its target (where its label sits) and enters the
 target's left edge. Lanes are assigned by interval colouring so non-overlapping wires share one. All colours are CSS variables
 on the `<svg>` (two palettes: dark/light), so the same markup serves the screen and the PNG export, which rasterises the SVG

@@ -37,7 +37,7 @@ const NodeMap = (() => {
 .node.err>.box{stroke:var(--err);stroke-width:2.8;stroke-opacity:1;fill:var(--err);fill-opacity:.14}
 .nm.q .node:not(.hit){opacity:.28}.node.hit>.box{stroke:var(--hit);stroke-width:2.2;stroke-opacity:1}
 .fold{cursor:pointer}.fold path{fill:var(--fold)}.fold:hover path{fill:var(--foldh)}
-.wire path{fill:none;stroke-width:1.6}.wire{opacity:.6}.wire.call path{stroke-dasharray:6 4}.wire.back path{stroke-dasharray:2 4}
+.wire path{fill:none;stroke-width:1.6}.wire{opacity:.6}.wire.call path{stroke-dasharray:6 4}.wire.back path{stroke-dasharray:.1 5.5;stroke-linecap:round;stroke-width:2.6}.wire.back{opacity:.95}
 .nm.f .wire{opacity:.22}.nm.f .wire.on{opacity:1}.wire.on path{stroke-width:2.4;stroke-dasharray:8 4;animation:flow .7s linear infinite}
 @keyframes flow{to{stroke-dashoffset:-12}}`;
 
@@ -90,7 +90,7 @@ const NodeMap = (() => {
     const seen = new Set(), wl = [];
     g.wires.forEach(w => {
       const a = rep[w.from], b = rep[w.to], k = `${a}>${b}:${w.kind}:${w.label}`;
-      if (a === b || seen.has(k)) return;
+      if ((a === b && (w.from !== w.to || a !== w.from)) || seen.has(k)) return; // wires inside a folded container vanish; a box's own loop-back wire stays
       seen.add(k);
       wl.push({ ...w, from: a, to: b });
     });
@@ -134,12 +134,14 @@ const NodeMap = (() => {
 
     // route each wire: out of the source's right edge (yo), down a right-hand lane, across the gap above the target (yg, where the
     // label pill sits), down a left-hand lane and into the target's left edge (yi). Lanes are shared by wires that don't overlap.
+    // A wire from a box back to itself (a loop-carried value: `total = add(total, i)`) is just a short loop round that box, so it
+    // takes no lane.
     const ws = wl.map(w => {
-      const a = N[w.from], b = N[w.to];
+      const a = N[w.from], b = N[w.to], self = w.from === w.to;
       const yo = a.y + HEAD / 2, yi = b.y + HEAD / 2, yg = b.y - 12 - SLOT * w.slot;
-      return { w, a, b, yo, yi, yg, R: { lo: Math.min(yo, yg), hi: Math.max(yo, yg) }, L: { lo: Math.min(yg, yi), hi: Math.max(yg, yi) } };
+      return { w, a, b, self, yo, yi, yg, R: { lo: Math.min(yo, yg), hi: Math.max(yo, yg) }, L: { lo: Math.min(yg, yi), hi: Math.max(yg, yi) } };
     });
-    const gl = 24 + lanes(ws.map(o => o.L)) * LANE, gr = 24 + lanes(ws.map(o => o.R)) * LANE;
+    const gl = 24 + lanes(ws.filter(o => !o.self).map(o => o.L)) * LANE, gr = 24 + lanes(ws.filter(o => !o.self).map(o => o.R)) * LANE;
     const WID = gl + W0 + gr;
 
     // the innermost visible box around a source line: where the "now" (stepping) and error highlights go
@@ -171,8 +173,8 @@ const NodeMap = (() => {
 ${n.rows.length ? `<rect x="${x + 10}" y="${n.y + HEAD}" width="${n.w - 20}" height="${n.rows.length * ROW + 8}" rx="4" class="vbox"/>${vals}${vchev}` : ''}</g>`;
     }).join('');
 
-    const wires = ws.map(({ w, a, b, yo, yi, yg, R, L }) => {
-      const xo = gl + a.x + a.w, xi = gl + b.x, xr = gl + W0 + 18 + R.lane * LANE, xl = gl - 18 - L.lane * LANE;
+    const wires = ws.map(({ w, a, b, self, yo, yi, yg, R, L }) => {
+      const xo = gl + a.x + a.w, xi = gl + b.x, xr = self ? xo + 12 : gl + W0 + 18 + R.lane * LANE, xl = self ? xi - 12 : gl - 18 - L.lane * LANE;
       const col = w.kind === 'call' ? CALL : hue(w.label, o.light), mid = gl + W0 / 2;
       const text = w.kind === 'call' ? w.label + (w.two ? ' ↔' : '') : (w.back ? '↻ ' : '') + w.label, pw = text.length * 5.9 + 12;
       return `<g class="wire ${w.kind}${w.back ? ' back' : ''}" data-a="${w.from}" data-b="${w.to}" data-l="${esc(w.label)}"><title>${esc(w.label)} (line ${a.line} → line ${b.line})</title>

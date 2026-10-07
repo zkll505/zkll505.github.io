@@ -30,6 +30,8 @@ input:focus { outline: 1px solid #0078d4; border-color: transparent; }
 /* toolbar */
 #bar { height: 35px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--bar); }
 .brand { font-weight: 600; margin-right: 12px; }
+#bar a { background: var(--btn); color: var(--btn-t); border-radius: 2px; padding: 4px 12px; text-decoration: none; } /* the Feedback link looks like the buttons next to it */
+#bar a:hover { background: var(--btn-h); }
 
 .h {
   height: 28px; flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px;

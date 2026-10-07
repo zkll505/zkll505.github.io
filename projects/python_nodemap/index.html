@@ -45,6 +45,14 @@
                 title="Download a .zip of every file plus a PNG of each node map">
                 Export
             </button>
+            <a
+                id="feedback"
+                href="https://forms.gle/yK2p1S2hzGKyzfm78"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Tell us what works and what doesn't (opens a form in a new tab)"
+                >Feedback</a
+            >
             <input id="pick" type="file" accept=".zip,.py" multiple hidden />
         </header>
 
@@ -89,7 +97,7 @@
                     <span class="grp" title="Which wires to draw">
                         <button class="tg" id="w-data">data</button>
                         <button class="tg" id="w-call">calls</button>
-                        <button class="tg" id="w-back">loops</button>
+                        <button class="tg" id="w-back" title="Wires that carry a value round a loop to its next repeat (shown with ↻)">loops</button>
                         <button
                             class="tg"
                             id="w-only"

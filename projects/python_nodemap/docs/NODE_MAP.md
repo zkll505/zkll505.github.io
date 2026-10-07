@@ -82,10 +82,10 @@ There are three kinds:
 | --- | --- | --- |
 | **Data** | solid line, one colour per variable, pill = the variable name (`total`, `self.name`) | A value made in the box at the start is **used** in the box at the arrowhead. |
 | **Call** | dashed orange line, pill = the call (`add(total, i)`) | Execution jumps to that function (or to a class's `__init__`). A **↔** in the pill and an arrowhead at both ends mean the function **returns** a value. |
-| **Loop-carried** | dotted line, pill starts with **↻** | The value is used earlier in a loop body than the line that produces it, so it comes from the *previous* repeat. |
+| **Loop-carried** | dotted line, pill starts with **↻** | A value carried round a loop to its **next repeat**. Most often it is a variable that updates itself: `total = add(total, i)`, `count += 1` and `n -= 1` each get a short dotted loop from the box round back into itself. It is also drawn when a value is used higher up in the loop body than the line that makes it (`if n > largest` and, further down, `largest = n`), and from an outer loop into an inner one (`i += 1` feeding the `print(i, j)` of an inner `for`). |
 
 The same variable always gets the same colour, so you can follow `total` through the whole program. The toolbar buttons **data**,
-**calls** and **loops** hide a kind of wire; **selected** shows only the wires of the selected box. Hover over a box, or put the
+**calls** and **loops** (the ↻ wires) hide a kind of wire; **selected** shows only the wires of the selected box. Hover over a box, or put the
 editor cursor in it, to light up its wires; the **Find variable** box highlights every box and wire that mentions a name.
 
 ## Highlights and states
