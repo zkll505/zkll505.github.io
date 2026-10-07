@@ -137,7 +137,10 @@ and a *view* (in its `lib.js`). The flow:
 The tkinter view (`libs/tkinter/lib.js`) is the biggest piece of front-end code: `pack` is rendered as nested flex boxes (the
 first slave takes a band of the cavity, the rest share what is left), `grid` as CSS grid, `place` as absolutely positioned
 boxes. Widget DOM elements are reused between updates, and `Entry`/`Text` values are only written when Python changed them
-(a revision counter), so typing is never overwritten by a stale value.
+(a revision counter), so typing is never overwritten by a stale value. A `Canvas` is a wrapper `<div>` that layout sizes (its
+`width`/`height` are only the *requested* size, so `pack(fill=BOTH, expand=True)` can make it larger, as in Tk) with the `<canvas>`
+bitmap inside resized to match through a `ResizeObserver`. Drawing and mouse coordinates are therefore 1:1; stretching the bitmap
+with CSS instead made clicks land away from the pointer.
 
 ## Limits at a glance
 

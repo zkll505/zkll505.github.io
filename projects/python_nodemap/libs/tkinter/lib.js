@@ -1,7 +1,9 @@
 /* The tkinter library. lib.py is the tkinter look-alike (the widgets, as plain Python objects). This file is the other half:
    it draws the widget tree that lib.py posts as floating HTML windows, and sends clicks, typing and
    mouse/key events back to Python. Layout: pack = nested flex "cavity" bands (Tk's own model), grid = CSS grid,
-   place = absolute positioning. Widget elements are reused between updates so typing and focus survive redraws. */
+   place = absolute positioning. Widget elements are reused between updates so typing and focus survive redraws.
+   A Canvas is a wrapper <div> that layout sizes (width/height are only its requested size; pack fill/expand can make it larger,
+   as in Tk); the <canvas> inside is resized to match, so drawing and mouse coordinates are 1:1 and never scaled. */
 
 {
   const TkView = (() => {
@@ -52,6 +54,7 @@
       }
       else if (t === 'listbox') s.width = `calc(${chars(o.width, 20)} + 24px)`;
       else if (t === 'scale') { if (o.orient === 'vertical') s.height = (o.length ?? 100) + 'px'; else s.width = (o.length ?? 100) + 'px'; }
+      else if (t === 'canvas') { s.minWidth = (o.width ?? 378) + 'px'; s.minHeight = (o.height ?? 265) + 'px'; } // requested size; layout may give more
       else if (CONTAINERS.has(t)) {
         const empty = !(n.k && n.k.length), placed = n.k && n.k.some(k => k.m.k === 'place');
         if (empty || placed) { if (o.width) s.width = o.width + 'px'; if (o.height) s.height = o.height + 'px'; }
@@ -98,7 +101,16 @@
         case 'progressbar': e = mk('progress', 'tk tk-progress'); break;
         case 'separator': e = mk('div', 'tk tk-sep'); break;
         case 'scrollbar': e = mk('div', 'tk'); e.style.display = 'none'; break;
-        case 'canvas': e = mk('canvas', 'tk tk-canvas'); e.tabIndex = 0; break; // focusable, so key bindings (turtle's onkey) work
+        case 'canvas': {
+          // e is what layout positions (and what mouse events measure against); e._cv is the bitmap, always the same size as e
+          e = mk('div', 'tk tk-canvas'); e.tabIndex = 0; // focusable, so key bindings (turtle's onkey) work
+          e._cv = mk('canvas', '', e);
+          new ResizeObserver(([en]) => { // layout gave it a new size (first layout, pack expand, the user resizing the window)
+            e._w = Math.round(en.contentRect.width); e._h = Math.round(en.contentRect.height);
+            if (e._n) drawCanvas(e, e._n);
+          }).observe(e);
+          break;
+        }
         case 'labelframe': e = mk('fieldset', 'tk tk-frame tk-labelframe'); e._legend = mk('legend', '', e); break;
         default: e = mk('div', 'tk tk-frame'); // frame
       }
@@ -161,10 +173,12 @@
     // ---------------------------------------------------------------- canvas
     const ANCH_CANVAS = { center: ['center', 'middle'], n: ['center', 'top'], s: ['center', 'bottom'], w: ['left', 'middle'], e: ['right', 'middle'],
                           nw: ['left', 'top'], ne: ['right', 'top'], sw: ['left', 'bottom'], se: ['right', 'bottom'] };
-    function drawCanvas(c, n) {
-      const o = n.o, w = o.width ?? 378, h = o.height ?? 265, bg = o.bg || '#f0f0f0';
-      if (c._rev === n.r && c.width === w && c.height === h && c._bg === bg) return;
-      c._rev = n.r; c._bg = bg; c.width = w; c.height = h; // (resizing also clears it)
+    function drawCanvas(e, n) { // e = the wrapper, e._cv = its <canvas>
+      const o = n.o, c = e._cv, bg = o.bg || '#f0f0f0';
+      const w = e._w || (o.width ?? 378), h = e._h || (o.height ?? 265); // the laid-out size once known (ResizeObserver), else the requested one
+      e._n = n; // so the observer can redraw this frame at a new size
+      if (e._rev === n.r && c.width === w && c.height === h && e._bg === bg) return;
+      e._rev = n.r; e._bg = bg; c.width = w; c.height = h; // (resizing also clears it)
       const g = c.getContext('2d');
       g.fillStyle = bg; g.fillRect(0, 0, w, h);
       for (const it of n.items) {
