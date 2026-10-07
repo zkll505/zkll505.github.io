@@ -1,4 +1,11 @@
-"""Backend self-check: runner.py plus every library, loaded the way the page loads them. Run: python tests/test_backend.py"""
+"""Backend self-check: runner.py plus every library, loaded the way the page loads them. Run: python tests/test_backend.py
+
+No dependencies and no browser: it imports runner.py, registers the libraries listed in index.html, and drives analyze() / run()
+and the GUI hooks directly, the same calls the worker makes. Each check below is a plain function full of asserts; the file
+ends by calling them all and printing "ok". To add one, write a function that runs a small student program with
+runner.run(json.dumps({"main.py": SOURCE}), "main.py") and asserts on the output, the returned JSON, or (for GUI libraries) the
+frames collected in POSTS, then call it from the bottom of the file. What this does not cover is drawing and layout in the page;
+for that, try the change in a browser (docs/ARCHITECTURE.md lists what is easy to break)."""
 import contextlib, importlib.util, io, json, pathlib, re, sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -13,9 +20,10 @@ runner.configure(json.dumps(names))
 for d in dirs:
     if (ROOT / "libs" / d / "lib.py").exists():
         runner.load_lib(d, (ROOT / "libs" / d / "lib.py").read_text(encoding="utf-8"))
-POSTS = []  # trees the page would receive while a script is running
+POSTS = []  # the GUI frames (widget trees) the page would receive while a script is running
 runner.GUI["tkinter"]["set_post"](lambda s: POSTS.append(json.loads(s)))
 
+# the program most checks run: a function with a doctest, a class, loops, if/elif/else and an import of a second file (HELPERS)
 SRC = '''import math
 from helpers import twice
 
@@ -56,6 +64,7 @@ HELPERS = "def twice(x):\n    return x * 2\n"
 
 
 def analyze():
+    """Static analysis: data, call, two-way and loop-carried wires; methods and self.attributes; elif as a sibling; syntax errors."""
     g = json.loads(runner.analyze(SRC))
     N, text = g["nodes"], lambda s: next(n["id"] for n in g["nodes"] if n["text"].startswith(s))
     W = lambda a, b, kind, label=None: [w for w in g["wires"] if (w["from"], w["to"], w["kind"]) == (text(a), text(b), kind) and label in (None, w["label"])]
@@ -74,6 +83,7 @@ def analyze():
 
 
 def execute():
+    """Running: output, values per line, parameters / call counts / returns, `global`, the import guard, the infinite-loop cutoff, tracebacks, doctest mode."""
     files = json.dumps({"main.py": SRC, "helpers.py": HELPERS})
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -110,6 +120,7 @@ def execute():
 
 
 def hints():
+    """Beginner hints (unavailable import, shared default, unused or unassigned names, missing return, shadowed built-ins ...); a clean program has none."""
     src = ("import os\nimport math\ndef f(a, items=[]):\n    unused = 1\n    return a\n    print('x')\n"
            "def g():\n    pass\nx = g()\nlist = [1]\nx == 3\nprint(y)\ny = 2\nf\nfor i in range(3):\n    t = t + i\n")
     h = json.loads(runner.analyze(src))["hints"]
@@ -126,6 +137,7 @@ def hints():
 
 
 def timeline():
+    """The step timeline: its length matches the hit counts, and replaying every fact reproduces the final values."""
     files = json.dumps({"main.py": SRC, "helpers.py": HELPERS})
     with contextlib.redirect_stdout(io.StringIO()):
         res = json.loads(runner.run(files, "main.py"))
@@ -144,6 +156,7 @@ def timeline():
 
 
 def input_and_errors():
+    """input() asks, then the re-run replays the answers with the same random seed; error locations; the output cap."""
     prog = json.dumps({"a.py": 'import random\nn = input("Name? ")\nprint("hi", n, random.randint(1, 10**9))\n'})
     with contextlib.redirect_stdout(io.StringIO()) as o:
         r = json.loads(runner.run(prog, "a.py", "run", "[]", 7))
@@ -228,6 +241,8 @@ def _walk(node):
 
 
 def tkinter_app():
+    """A tkinter program end to end: the widget tree, pack/grid options, then events (typing, click, key, timer) and closing; and
+    when a window stays open after the script (shown) versus is dropped (never shown)."""
     POSTS.clear()
     with contextlib.redirect_stdout(io.StringIO()) as o:
         r = json.loads(runner.run(json.dumps({"main.py": TKAPP}), "main.py"))
@@ -271,6 +286,7 @@ def tkinter_app():
 
 
 def tkinter_widgets():
+    """Each widget kind reports the user's input back to Python; an exception inside a callback is printed, not fatal."""
     POSTS.clear()
     with contextlib.redirect_stdout(io.StringIO()):
         runner.run(json.dumps({"w.py": TKWIDGETS}), "w.py")
@@ -328,6 +344,7 @@ App().mainloop()
 
 
 def tkinter_classes():
+    """Subclassing Frame / Tk (the usual class-based app), fonts, ttk widgets, widget options changed from a callback."""
     POSTS.clear()
     with contextlib.redirect_stdout(io.StringIO()):
         r = json.loads(runner.run(json.dumps({"c.py": TKCLASS}), "c.py"))
@@ -349,6 +366,7 @@ def tkinter_classes():
 
 
 def tkinter_star_import():
+    """`from tkinter import *` exports the constants and widgets like the real module (but not ttk-only names)."""
     star = ("from tkinter import *\nfrom tkinter import messagebox, ttk\nroot = Tk()\nLabel(root, text='hi').pack(side=LEFT, fill=X)\n"
             "v = StringVar(value='x')\nttk.Label(root, text=v.get()).pack()\nroot.mainloop()\n")
     POSTS.clear()
@@ -366,6 +384,7 @@ def tkinter_star_import():
 
 
 def enum_and_unittest():
+    """`enum` works, and the unittest report (plain Run and the Tests button) goes to stdout with the temp folder scrubbed out."""
     enum_src = ("from enum import Enum, auto\nclass Color(Enum):\n    RED = 1\n    GREEN = auto()\n"
                 "c = Color.GREEN\nprint(c, c.value, Color(1).name, [x.name for x in Color])\n")
     with contextlib.redirect_stdout(io.StringIO()) as o:
@@ -418,6 +437,8 @@ print("never")
 
 
 def turtle_lib():
+    """The turtle library: drawing as canvas items (origin in the middle, y up), colours, fill, key / click / timer events, animation
+    frames, and that a second run gets a fresh window instead of the previous one."""
     POSTS.clear()
     with contextlib.redirect_stdout(io.StringIO()) as o:
         r = json.loads(runner.run(json.dumps({"t.py": TURTLE}), "t.py"))
@@ -490,7 +511,7 @@ def example_library():
 
 
 if __name__ == "__main__":
-    runner.LIMIT = 20_000
+    runner.LIMIT = 20_000  # a smaller cutoff keeps the infinite-loop checks fast
     analyze()
     execute()
     hints()

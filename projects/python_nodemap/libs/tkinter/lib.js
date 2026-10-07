@@ -5,6 +5,10 @@
 
 {
   const TkView = (() => {
+    // send(ev) hands an event to lib.py's dispatch(): {t: 'click' | 'value' | 'check' | 'radio' | 'sel' | 'menu' | 'close' | 'ev', id, ...}
+    // where 'ev' is a mouse or key event (k = press, release, double, motion, enter, leave, wheel, key, keyup). `wants` = the kinds
+    // some binding listens to (from the tree), so we do not send mouse moves nobody asked for. z = next window stacking order,
+    // focusN = the last focus_set() serial we obeyed.
     let send = () => {}, wants = new Set(), z = 20, focusN = 0;
     const wins = new Map(); // window id -> { el, body, bar, menubar, els: Map(widget id -> element) }
     const host = () => document.getElementById('tkhost');

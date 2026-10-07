@@ -1,7 +1,20 @@
 /* Node map: lays the analysis out as one vertical stack (same order as the source lines) and draws it as SVG.
    Wires never cross a card: they leave the right edge, run down a gutter lane, cross the gap above the target
-   and enter its left edge. The same SVG string is rasterised for the PNG export. */
+   and enter its left edge. The same SVG string is rasterised for the PNG export.
+
+   Public API
+     NodeMap.build(graph, trace, opts) -> { svg, w, h }    graph = analyze() output; trace = values/counts of this file, or undefined
+                                                           before a run; opts = { fold, now, err, light } (see build)
+     NodeMap.png(graph, trace, opts)   -> Promise<Blob>    the same picture as a PNG
+     NodeMap.viewAt(timeline, n)       -> { file: trace }  the values and counts as they stood after n recorded steps
+     NodeMap.nodeAt(graph, line)       -> the innermost node covering a 1-based source line
+     NodeMap.foldKey(node)             -> the key used in opts.fold to collapse a container
+   build() only returns a string. app.js puts it in #map and afterwards toggles CSS classes on it (hover, search, current step)
+   without redrawing. */
 const NodeMap = (() => {
+  // Geometry in SVG pixels: HEAD = height of a card's header (kind label + code line), ROW = one line of the value box,
+  // MINW = narrowest card, IND = indent of a nested card, SLOT = vertical room per incoming wire label above a card,
+  // LANE = distance between parallel wires in the gutters.
   const HEAD = 36, ROW = 16, MINW = 320, IND = 16, SLOT = 18, LANE = 14; // SLOT = row per incoming wire label, LANE = gap between parallel wires
   const COLOR_DARK = { def: '#7aa2f7', class: '#bb9af7', for: '#ff9e64', while: '#ff9e64', if: '#e0af68', else: '#e0af68', with: '#e0af68',
                        try: '#f7768e', except: '#f7768e', return: '#9ece6a', import: '#73daca', assign: '#7dcfff', expr: '#c0caf5', other: '#7b86a8' };
@@ -29,7 +42,9 @@ const NodeMap = (() => {
 
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const clip = (s, n) => (s.length > n ? s.slice(0, Math.max(1, n - 1)) + '…' : s);
+  // a stable colour per variable name, so the same variable has the same wire colour everywhere
   const hue = (s, light) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return light ? `hsl(${h},68%,38%)` : `hsl(${h},75%,66%)`; };
+  // identifies a container in the set of collapsed ones; survives edits elsewhere in the file (it is the kind and first line)
   const foldKey = n => n.kind + ':' + n.line;
 
   function lanes(items) { // interval colouring: wires whose vertical spans don't overlap share a lane
@@ -42,6 +57,7 @@ const NodeMap = (() => {
     return ends.length;
   }
 
+  // a polyline [[x, y], ...] as an SVG path whose corners are rounded with radius r (never more than half a segment)
   function rounded(p, r = 7) {
     const q = [];
     for (const pt of p) if (!q.length || Math.hypot(pt[0] - q.at(-1)[0], pt[1] - q.at(-1)[1]) > .5) q.push(pt);
@@ -77,10 +93,12 @@ const NodeMap = (() => {
     });
     const shown = N.filter(n => rep[n.id] === n.id);
 
+    // incoming wires per node; each gets a "slot", one row of label space in the gap above its target card
     const inc = N.map(() => []);
     wl.forEach(w => { w.slot = inc[w.to].length; inc[w.to].push(w); });
     const gap = n => (inc[n.id].length ? 25 + SLOT * (inc[n.id].length - 1) : 14); // room above a node for its incoming wire labels
 
+    // the value box of a node: [name, value] pairs from the trace ('–' before the first run), at most 5 rows (then '+n more')
     const rows = n => {
       const v = (n.kind === 'def' ? tr?.params : tr?.vals)?.[n.line] || {};
       let r = n.show.map(k => [k, v[k] ?? '–']);
@@ -88,10 +106,13 @@ const NodeMap = (() => {
       if (n.kind === 'return') r = tr ? [['value', tr.rets?.[n.line] ?? '–']] : [];
       return r.length > 5 ? [...r.slice(0, 4), [`+${r.length - 4} more`, '']] : r;
     };
+    // how often a node ran (for a function: how often it was called); null before any run. Never-run nodes are drawn dim.
     const count = n => (tr ? (n.kind === 'def' ? tr.calls?.[n.line] : tr.hits?.[n.line]) || 0 : null);
 
+    // width a node needs: nested cards are inset on both sides, so a container is wider than its widest child
     const need = n => (n.minw = Math.max(MINW, ...n.vis.map(k => need(N[k]) + 2 * IND)));
     const W0 = Math.max(...roots.map(need));
+    // layout, top-down: sets x, y, w, h on every visible node and returns the y just below it and its children
     const place = (n, x, w, y) => {
       Object.assign(n, { x, y, w, rows: rows(n) });
       let b = y + HEAD + (n.rows.length ? n.rows.length * ROW + 16 : 0);
@@ -104,6 +125,8 @@ const NodeMap = (() => {
     roots.forEach(r => { y = place(r, 0, W0, y + gap(r)); });
     const H = y + 28;
 
+    // route each wire: out of the source's right edge (yo), down a right-hand lane, across the gap above the target (yg, where the
+    // label pill sits), down a left-hand lane and into the target's left edge (yi). Lanes are shared by wires that don't overlap.
     const ws = wl.map(w => {
       const a = N[w.from], b = N[w.to];
       const yo = a.y + HEAD / 2, yi = b.y + HEAD / 2, yg = b.y - 12 - SLOT * w.slot;
@@ -112,9 +135,11 @@ const NodeMap = (() => {
     const gl = 24 + lanes(ws.map(o => o.L)) * LANE, gr = 24 + lanes(ws.map(o => o.R)) * LANE;
     const WID = gl + W0 + gr;
 
+    // the innermost visible card around a source line: where the "now" (stepping) and error highlights go
     const inner = line => shown.filter(n => n.line <= line && line <= n.end).sort((a, b) => (a.end - a.line) - (b.end - b.line))[0]?.id;
     const nowId = o.now ? inner(o.now) : null, errId = o.err ? inner(o.err) : null;
 
+    // drawing: the cards first, then the wires on top, then the little connection ports on each card's edges
     const nodes = shown.map(n => {
       const x = gl + n.x, c = COLOR[n.kind] || COLOR.other, cnt = count(n), box = n.kids.length > 0;
       const dim = tr && cnt === 0 && n.kind !== 'else' && n.kind !== 'try';
@@ -155,6 +180,7 @@ ${n.rows.length ? `<rect x="${x + 10}" y="${n.y + HEAD}" width="${n.w - 20}" hei
   /** innermost node covering a 1-based source line */
   const nodeAt = (g, line) => g.nodes.filter(n => n.line <= line && line <= n.end).sort((a, b) => (a.end - a.line) - (b.end - b.line))[0];
 
+  /** the map as a PNG Blob: the same SVG rasterised through a canvas, up to 2x, never more than 8000 px on a side */
   async function png(g, tr, o = {}) {
     const { svg, w, h } = build(g, tr, o);
     const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));

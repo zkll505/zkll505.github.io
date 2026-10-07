@@ -1,5 +1,9 @@
 """Backend for the node map. Runs inside Pyodide in a Web Worker (see worker.js).
 
+Two jobs, and neither knows about any particular library (tkinter, turtle, doctest ... live in libs/<name>/lib.py):
+  1. STATIC  analyze() parses the code with `ast` and never runs it, so the map can update while you type.
+  2. DYNAMIC run() executes the program under sys.settrace and records what happened, line by line.
+
 configure(allowed_json)  -> set the import allow-list (the names of the registered libraries)
 load_lib(name, src)      -> run a library's lib.py (it may add run modes and a GUI backend; docs/ADDING_A_LIBRARY.md)
 analyze(src, mods_json)  -> JSON {nodes, wires, hints}: one node per statement, wires = data flow, hints = beginner lint
@@ -8,6 +12,24 @@ run(files_json, main, mode, answers_json, seed)
                             recorded with sys.settrace
 gui_event / gui_tick / gui_pump / gui_stop / gui_libs
                          -> the page talking to a GUI library's window (tkinter, turtle) after run() returned
+
+Data shapes (plain JSON, handed to nodemap.js / app.js unchanged):
+  node  {id, kind, line, end, text, parent, kids, show}
+        One per statement. Ids are numbered in pre-order (a statement before the statements inside it). `kind` is def, class,
+        for, while, if, else, try, except, with, return, import, expr, assign or other. `show` = the names its value box lists.
+  wire  {from, to, kind, label, two?, back?}
+        kind "data": a value flows from node `from` to node `to` (label = the variable name; back = it comes from a later line
+        of the same loop). kind "call": `to` is the function/class/method called (label = the call text; two = it returns a value).
+  hint  {line, msg, kind}   kind is "warn" or "error"; the editor draws these as squiggles.
+  run   {files, error, need_input, gui, timeline}
+        files[name] = {vals, hits, calls, rets, params}, each keyed by line number (the aggregate shown when the run is finished).
+        timeline = {files, steps, facts, trunc}: steps = [file index, line, file index, line, ...] for every executed line;
+        facts = [[step, file index, "v"|"p"|"r", line, data], ...], values that became known right before step number `step`
+        (v = variable values after a line, p = parameters at a call, r = a return value). NodeMap.viewAt() replays them.
+
+How tracing works: a "line" event fires BEFORE the line runs, so what a statement produced is snapshotted at the next line
+event of the same frame (or at its "return"). That is why `last` remembers the previous line of each frame.
+Safety limits (constants below): LIMIT traced lines (assumed infinite loop), MAXSTEPS / MAXFACTS timeline entries, OUTLIM output.
 """
 import ast, builtins, importlib, json, os, random, re, shutil, sys, tempfile, traceback, types
 
@@ -19,20 +41,25 @@ except ImportError:
 ALLOWED = ()  # import names of the registered libraries, set by configure()
 MODES = {}  # run modes added by libraries: id -> fn(module)
 GUI = {}  # GUI backends added by libraries: lib name -> hooks (reset, finish, active, dispatch, tick, pump, set_post, exit)
+# method names that change the object they are called on: `lst.append(x)` counts as a new definition of `lst`
 MUTATORS = {"append", "extend", "insert", "remove", "pop", "clear", "sort", "reverse", "update", "add", "discard", "setdefault", "popitem"}
+# built-in names that beginners overwrite by accident (`list = [1, 2]`); assigning one of them triggers a hint
 SHADOW = {"list", "dict", "set", "str", "int", "float", "sum", "max", "min", "len", "input", "print", "range", "type", "id", "sorted",
           "abs", "round", "all", "any", "map", "filter", "zip", "open", "next", "iter", "format", "tuple", "bool", "object", "chr", "ord"}
 LIMIT = 1_500_000  # traced lines before we assume an infinite loop
 MAXSTEPS, MAXFACTS = 30_000, 120_000  # timeline size caps
 OUTLIM = 400_000  # characters of output
 FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
+# statement type -> node kind. Assign / AugAssign / AnnAssign become "assign"; anything not listed here becomes "other".
 KIND = {ast.FunctionDef: "def", ast.AsyncFunctionDef: "def", ast.ClassDef: "class", ast.For: "for", ast.AsyncFor: "for",
         ast.While: "while", ast.If: "if", ast.Try: "try", ast.ExceptHandler: "except", ast.With: "with", ast.AsyncWith: "with",
         ast.Return: "return", ast.Import: "import", ast.ImportFrom: "import", ast.Expr: "expr"}
+# the node fields sent to the page; the rest (scope, cls, uses, calls, ...) is bookkeeping only analyze() needs
 OUT = ("id", "kind", "line", "end", "text", "parent", "kids", "show")
 
 
 def params(a):
+    """Every parameter name of an ast.arguments, including *args and **kwargs."""
     return [x.arg for x in a.posonlyargs + a.args + a.kwonlyargs] + [x.arg for x in (a.vararg, a.kwarg) if x]
 
 
@@ -93,6 +120,10 @@ def scan(exprs, me, methods):
 
 
 def analyze(src, mods_json="[]"):
+    """Static analysis of one file -> JSON {nodes, wires, hints}, or {error, line, msg} for a syntax error.
+    mods_json = names of the project's other files (importable, so `import helpers` is not flagged).
+    Steps: 1) visit() turns every statement into a node and records which node defines which name; 2) sources() resolves each
+    use of a name to the node(s) that defined it, which gives the wires; 3) the hints that need those tables are added last."""
     mods = set(json.loads(mods_json))  # names of the project's other files (importable)
     try:
         tree = ast.parse(src)
@@ -100,16 +131,22 @@ def analyze(src, mods_json="[]"):
         return json.dumps({"error": f"line {e.lineno}: {e.msg}", "line": e.lineno or 1, "msg": e.msg})
     lines = src.splitlines()
     methods = {f.name for c in ast.walk(tree) if isinstance(c, ast.ClassDef) for f in c.body if isinstance(f, FUNCS)}
+    # nodes: every node dict. tabs[scope][name] = ids of the nodes defining `name` in `scope` (-1 = module level, else the id of
+    # the def/class node). glob[scope] = names declared `global`/`nonlocal` there. rets = ids of defs that `return` a value,
+    # gens = ids of generator defs, by_method[name] = ids of methods with that name, init[class id] = id of its __init__.
     nodes, tabs, glob, rets, gens, by_method, init, hints = [], {}, {}, set(), set(), {}, {}, []  # tabs[scope][name] = ids of defining nodes
 
     def hint(line, msg, kind="warn"):
         hints.append({"line": line, "msg": msg, "kind": kind})
 
     def reg(scope, name, nid, cls):
+        """Record that node nid defines `name`. `self.x` names go to the class's table (all its methods share them); a name
+        declared global/nonlocal goes to the module table."""
         scope = cls if "." in name and cls is not None else -1 if name in glob.get(scope, ()) else scope
         tabs.setdefault(scope, {}).setdefault(name, []).append(nid)
 
     def add(kind, line, end, text, parent, scope, cls=None, name=None):
+        """Create a node. scope = id of the enclosing def/class node (-1 at module level), cls = the class whose `self` is in use."""
         n = dict(id=len(nodes), kind=kind, line=line, end=end, text=text, parent=parent, scope=scope, cls=cls,
                  kids=[], uses=[], calls=[], show=[], name=name)
         nodes.append(n)
@@ -118,12 +155,14 @@ def analyze(src, mods_json="[]"):
         return n
 
     def build(stmts, parent, scope, me, cls):
+        """Visit a list of statements (`me` = the name of `self` inside a method) and flag code after return/break/continue/raise."""
         for i, s in enumerate(stmts):
             visit(s, parent, scope, me, cls)
             if isinstance(s, (ast.Return, ast.Break, ast.Continue, ast.Raise)) and i + 1 < len(stmts):
                 hint(stmts[i + 1].lineno, f"This line can never run: it comes right after a {type(s).__name__.lower()}.")
 
     def lint(s, t, ex_defs):
+        """Beginner hints that only need the statement itself (the ones that need the name tables come after the wires)."""
         if t in (ast.Import, ast.ImportFrom):
             tops = [a.name.split(".")[0] for a in s.names] if t is ast.Import else [] if s.level else [(s.module or "").split(".")[0]]
             for top in tops:
@@ -141,6 +180,8 @@ def analyze(src, mods_json="[]"):
                     hint(s.lineno, f"'{d}' is already a built-in Python name. Reusing it hides the built-in, so pick another name.")
 
     def visit(s, parent, scope, me, cls):
+        """One statement -> one node, then its children. Compound statements recurse through build(); `elif` is visited as a
+        sibling of its `if`, and `else:` / `finally:` get a small pseudo-node of their own."""
         t = type(s)
         if isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and isinstance(s.value.value, str):
             return  # docstring
@@ -202,6 +243,7 @@ def analyze(src, mods_json="[]"):
     build(tree.body, None, -1, None, None)
 
     def loop_of(n):
+        """The innermost for/while loop around node n inside its own function (None if there is none)."""
         p = n["id"] if n["kind"] == "while" else n["parent"]
         while p is not None and nodes[p]["kind"] not in ("def", "class"):
             if nodes[p]["kind"] in ("for", "while"):
@@ -236,6 +278,7 @@ def analyze(src, mods_json="[]"):
     wires = {}
 
     def wire(a, b, kind, label, **kw):
+        """Add a wire a -> b. The same wire in the opposite direction merges into one two-way wire."""
         if a == b:
             return
         r = wires.get((b, a, kind, label))
@@ -295,11 +338,12 @@ def analyze(src, mods_json="[]"):
 
 # ---------------------------------------------------------------- running
 
-class StepLimit(BaseException):
+# The three exceptions below derive from BaseException so a student's `except Exception:` cannot swallow them.
+class StepLimit(BaseException):  # too many traced lines: probably an infinite loop
     pass
 
 
-class OutputLimit(BaseException):
+class OutputLimit(BaseException):  # more than OUTLIM characters printed
     pass
 
 
@@ -308,6 +352,8 @@ class NeedInput(BaseException):  # input() with no queued answer: the page asks 
 
 
 def short(v, n=40, d=0):
+    """A value as shown in a node's value box: repr, trimmed to n characters. Objects show their fields one level deep
+    (Dog(name='Rex', tricks=[...])) and library objects (a turtle, a widget) only their class name."""
     try:
         r = repr(v)
         if r.startswith("<") and " object at 0x" in r and type(v).__module__.endswith("_lib"):
@@ -339,15 +385,21 @@ def snap(frame, names, store, key):
     return got
 
 
-_LIVE = {}  # a GUI window outlives run(): its callbacks run later, so we keep what they need (see gui_call)
+# A GUI window outlives run(): its callbacks run later, so the sandbox pieces they need are kept here (see gui_call):
+# enter / leave (install / remove the sandbox), reset (zero the step and output counters), T (the traces being updated),
+# step, root (the temp folder holding the project files) and mods (the project module names to remove from sys.modules).
+_LIVE = {}
 
 
 def configure(allowed_json):
+    """Set the import allow-list: the names of the registered libraries (PyLibs.names() in the page)."""
     global ALLOWED
     ALLOWED = tuple(json.loads(allowed_json))
 
 
 def load_lib(name, src):
+    """Run a library's lib.py once, at start-up (docs/ADDING_A_LIBRARY.md). Picks up the names it may define: install(),
+    run_modes (-> MODES) and gui_hooks (-> GUI). Its frames are hidden from students' tracebacks (the "<lib name>" filename)."""
     ns = {"__name__": name + "_lib"}
     exec(compile(src, f"<lib {name}>", "exec"), ns)
     if "install" in ns:
@@ -361,6 +413,7 @@ def load_lib(name, src):
 
 
 def gui_cleanup():
+    """The last GUI window is gone: delete the temp project folder and the project modules kept alive for its callbacks."""
     if _LIVE:
         shutil.rmtree(_LIVE.get("root"), ignore_errors=True)
         for m in _LIVE.get("mods", ()):
@@ -380,6 +433,8 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
     names = list(files)
     fid = {n: i for i, n in enumerate(names)}
     info, T, step = {}, {}, [0]
+    # timeline: steps = [file index, line, ...], facts as described in the module docstring; over[0] = the step cap was hit;
+    # cur = (file, line) being executed (to place an error at the right spot); outn / outover count the output against OUTLIM
     steps, facts, over, cur, outn, outover = [], [], [False], [None, 0], [0], [False]  # timeline: steps = [file, line, ...]
     for name, src in files.items():
         path = os.path.join(root, name)
@@ -397,7 +452,7 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
         if len(steps) < 2 * MAXSTEPS and len(facts) < MAXFACTS:
             facts.append([len(steps) // 2, fid[name], kind, line, data])
 
-    def trace(frame, event, arg):
+    def trace(frame, event, arg):  # sys.settrace callback: runs once per new call frame
         co = frame.f_code
         i = info.get(co.co_filename)
         if i is None:
@@ -408,7 +463,7 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
             t["calls"][k] = t["calls"].get(k, 0) + 1
             fact(name, "p", k, snap(frame, prm.get(k), t["params"], k))
 
-        def local(frame, event, arg):
+        def local(frame, event, arg):  # the per-line tracer of this one frame; last[0] = the line that just finished
             ln = last[0]
             if event == "line":
                 if ln:
@@ -442,14 +497,14 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
     user = mods | {"__main__"}
     real_import, real_input = builtins.__import__, builtins.input
 
-    def guard(name, globals=None, locals=None, fromlist=(), level=0):
+    def guard(name, globals=None, locals=None, fromlist=(), level=0):  # replaces __import__ while the program runs
         if level == 0 and (globals is None or globals.get("__name__") in user):
             top = name.split(".")[0]
             if top not in ALLOWED and top not in mods and top != "__main__":  # unittest.main() imports __main__
                 raise ImportError(f"'{top}' isn't available here. You can import: " + ", ".join(ALLOWED + tuple(sorted(mods - {main[:-3]}))))
         return real_import(name, globals, locals, fromlist, level)
 
-    def ui_input(msg=""):
+    def ui_input(msg=""):  # replaces input(): answers come from the page, which re-runs the program when one is missing
         sys.stdout.write(str(msg))
         sys.stdout.flush()
         if not answers:
@@ -473,6 +528,7 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
             return getattr(self.f, k)
 
     def fail(e):
+        """Print the traceback (without our own frames) to stderr and return {file, line, msg} for the innermost user frame."""
         te = traceback.TracebackException.from_exception(e)
         me = analyze.__code__.co_filename
         te.stack = traceback.StackSummary.from_list([f for f in te.stack if f.filename != me and not f.filename.startswith("<lib ")])  # hide our own frames
@@ -551,6 +607,8 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
 
 
 def gui_reply(lib, touched=False):
+    """The JSON answer to the page for a GUI library: pump()'s {alive, next, tree?}, plus the node map's new values if
+    callbacks ran (`touched`). Ends the sandbox when no window is left."""
     out = GUI[lib]["pump"]()
     out["lib"] = lib
     if _LIVE and touched:
@@ -583,18 +641,22 @@ def gui_call(lib, fn):
 
 
 def gui_event(lib, s):
+    """The page sent a window event (JSON string s): run the library's dispatch() inside the sandbox."""
     return gui_call(lib, lambda: GUI[lib]["dispatch"](json.loads(s)))
 
 
 def gui_tick(lib):
+    """A timer the library asked for (`next` in pump()) is due: run the library's tick() inside the sandbox."""
     return gui_call(lib, GUI[lib]["tick"])
 
 
 def gui_pump(lib):
+    """Ask a library for its current frame and next timer without running anything (used right after run())."""
     return gui_reply(lib)
 
 
 def gui_libs():
+    """Names of the libraries that have a GUI backend."""
     return json.dumps(list(GUI))
 
 

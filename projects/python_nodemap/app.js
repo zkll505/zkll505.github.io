@@ -1,12 +1,23 @@
+/* Python Nodemap: the IDE, running on the page's main thread. Python itself runs in a worker (worker.js + runner.py).
+   Everything is a plain global on purpose, so you can poke at it from the browser console (S, P, W, cm, NodeMap, PyLibs).
+
+   Where things are, top to bottom:  state (S, P) -> the worker client (W) -> console -> editor (CodeMirror) -> files/tabs ->
+   node map (analyse, draw, highlight, zoom, folding) -> preferences -> stepping -> run / stop / input() -> import / export / share
+   -> resizable panels -> start-up.
+
+   The main loops:  typing -> analyze (debounced) -> S.graph -> NodeMap.build() -> SVG in #map
+                    Run -> W.call('run') -> S.trace + S.tl (the timeline) -> draw() again, now with values
+                    stepping -> NodeMap.viewAt(S.tl, step) -> draw() */
 'use strict';
 const $ = s => document.querySelector(s);
-const STORE = 'python_nodemap.v1', PREFS = 'python_nodemap.prefs';
+const STORE = 'python_nodemap.v1', PREFS = 'python_nodemap.prefs'; // localStorage keys: the project (files, tabs) and the preferences
 const PYODIDE = 'https://cdn.jsdelivr.net/pyodide/v0.29.5/full/'; // pinned: Pyodide 314+ only supports module workers; 0.29 (Python 3.13) works in our classic Blob worker
 // unpacked sizes of what Pyodide downloads (about 5 MB over the wire), used for the progress bar. Re-measure if PYODIDE changes.
 const PYODIDE_SIZES = { 'pyodide.asm.wasm': 8647684, 'python_stdlib.zip': 2424003, 'pyodide.asm.js': 1074322, 'pyodide-lock.json': 122027 };
 let ready = false; // Python finished loading
-const STOPPED = new Error('stopped');
+const STOPPED = new Error('stopped'); // what a pending worker call rejects with when Stop kills the worker (not an error to show)
 
+// the project a first-time visitor starts with: a function, a class, a loop, an if/else, an import of a second file and a doctest
 const STARTER = {
   'main.py': `import random
 from helpers import average
@@ -67,6 +78,7 @@ if __name__ == "__main__":
 // ---- state. Files + open tabs persist in localStorage; everything else lives for the session.
 const read = k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
 const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+// S = the project and the current results. Files, open tabs and the active file are saved; the rest lives for the session.
 const S = (() => { const s = read(STORE); return s?.files?.[s.active] ? s : { files: { ...STARTER }, open: ['main.py'], active: 'main.py' }; })();
 Object.assign(S, {
   trace: {},   // file -> values/hits of the finished run
@@ -75,19 +87,23 @@ Object.assign(S, {
   error: null, // {file, line, msg} of the last run
   graph: {}, key: {}, err: {}, hints: {}, fold: {}, // per-file analysis results (key = what they were computed from)
 });
+// P = preferences (saved): theme, editor font size, map zoom (a number or 'fit'), the wire filters (data / calls / loops = back) and
+// `only` (draw just the selected node's wires)
 const P = { light: false, font: 14, zoom: 1, data: true, call: true, back: true, only: false, ...read(PREFS) };
-const docs = {};
+const docs = {}; // file name -> CodeMirror document (keeps undo history and cursor per file)
 const save = () => store(STORE, { files: S.files, open: S.open, active: S.active });
 let timer;
+// debounce: f runs only if nothing else calls later() within ms milliseconds
 const later = (f, ms) => { clearTimeout(timer); timer = setTimeout(f, ms); };
 const setStatus = t => { $('#st').textContent = t; };
+// the project's module names (file names without .py): they can import each other, so analysis must know them
 const modsOf = () => Object.keys(S.files).map(f => f.slice(0, -3)).sort();
 const okName = n => /^[A-Za-z_]\w*\.py$/.test(n);
 
 // ---- Python lives in a worker (worker.js + runner.py + libs/*/lib.py), so the page never freezes and Stop works
 const W = {
   n: 0, pend: new Map(), onOut: () => {}, onProgress: () => {},
-  call(type, data) {
+  call(type, data) { // one request to the worker -> Promise of its result (a JSON string); every call but 'init' waits for Python to be ready
     return (type === 'init' ? Promise.resolve() : W.ready).then(() => new Promise((res, rej) => {
       const id = ++W.n;
       W.pend.set(id, { res, rej });
@@ -112,7 +128,7 @@ const W = {
     W.ready = W.src.then(([runner, libs]) => W.call('init', { url: PYODIDE, runner, libs, allowed: PyLibs.names(), sizes: PYODIDE_SIZES }));
     W.ready.catch(() => {});
   },
-  restart() { // Stop: killing the worker is the only way to interrupt running Python
+  restart() { // Stop: killing the worker is the only way to interrupt running Python (it restarts; the files are in the HTTP cache)
     W.w.terminate();
     W.pend.forEach(p => p.rej(STOPPED));
     W.pend.clear();
@@ -120,9 +136,10 @@ const W = {
   },
 };
 
-// ---- console. A re-run (after input) re-sends output we already showed, so only the new part is displayed.
+// ---- console. A re-run (after input) re-sends output we already showed, so only the new part is displayed:
+// `seen` = characters received during this attempt, `shown` = the most characters of any attempt, already on screen.
 let seen = 0, shown = 0;
-function out(text, cls = '') {
+function out(text, cls = '') { // append text to the console; `File "x.py", line 3` in a traceback becomes a link to that line
   const span = document.createElement('span');
   span.className = cls;
   text.split(/(File "[^"]+", line \d+)/).forEach((p, i) => {
@@ -159,7 +176,7 @@ const cm = CodeMirror($('#cm'), {
   },
 });
 const docOf = n => (docs[n] ||= CodeMirror.Doc(S.files[n], 'python'));
-cm.on('change', () => {
+cm.on('change', () => { // every edit: store it, drop the results of the last run (they no longer match), re-analyse shortly
   S.files[S.active] = cm.getValue();
   delete S.trace[S.active];
   S.tl = null; S.step = null; S.error = null; // the recorded run no longer matches the code
@@ -178,14 +195,14 @@ cm.on('inputRead', (c, ch) => { // autocomplete as you type: after a dot, or aft
   const before = c.getLine(c.getCursor().line).slice(0, c.getCursor().ch);
   if (ch.text[0] === '.' || /[A-Za-z_]\w$/.test(before)) complete(c);
 });
-function gotoLine(l) {
+function gotoLine(l) { // 1-based line: put the cursor there and scroll it into view
   cm.setCursor({ line: l - 1, ch: 0 });
   cm.scrollIntoView(null, 120);
   cm.focus();
 }
 
 // marks in the editor: the line being stepped to, the line that raised an error, and lint squiggles
-const slot = {};
+const slot = {}; // 'now' and 'err': the one highlighted line of each kind (and its message widget), so it can be cleared
 function clearSlot(k) {
   const m = slot[k];
   if (!m) return;
@@ -213,7 +230,7 @@ function showMarks() {
   }
 }
 let lintMarks = [];
-function showHints() {
+function showHints() { // draw the analyser's hints: a squiggle under the line, a dot in the gutter, the count in the status bar
   lintMarks.forEach(m => m.clear());
   lintMarks = [];
   cm.clearGutter('lint');
@@ -234,13 +251,14 @@ function showHints() {
 }
 
 // ---- files: explorer + tabs
-function chrome() {
+function chrome() { // re-render the tab strip, the explorer list and the map's title from S
   $('#tabs').innerHTML = S.open.map(n => `<div class="tab${n === S.active ? ' on' : ''}" data-f="${n}">${n}<b data-x="${n}">×</b></div>`).join('');
   $('#files').innerHTML = Object.keys(S.files).sort().map(n => `<li class="${n === S.active ? 'on' : ''}" data-f="${n}"><span>${n}</span><i data-ren="${n}" title="Rename">✎</i><i data-del="${n}" title="Delete">✕</i></li>`).join('');
   $('#mapname').textContent = '· ' + S.active;
 }
+// remove every trace of file n (its text, document and cached results)
 const forget = n => [S.files, docs, S.trace, S.graph, S.key, S.err, S.hints, S.fold].forEach(o => delete o[n]);
-function openFile(n) {
+function openFile(n) { // make n the active file (adding a tab if needed) and redraw everything that depends on it
   if (!S.open.includes(n)) S.open.push(n);
   S.active = n;
   cm.swapDoc(docOf(n));
@@ -252,7 +270,7 @@ function closeTab(n) {
   if (!S.open.length) S.open = [Object.keys(S.files).find(x => x !== n) || n];
   openFile(S.active === n || !S.open.includes(S.active) ? S.open[0] : S.active);
 }
-function askName(msg, def) {
+function askName(msg, def) { // ask for a file name; it must be importable (letters, digits, _), so `import name` works
   let n = (prompt(msg, def) || '').trim();
   if (!n) return null;
   if (!n.endsWith('.py')) n += '.py';
@@ -296,6 +314,8 @@ $('#files').onclick = e => {
 
 // ---- node map
 let act = null, hov = null; // node under the cursor / under the mouse
+// Re-analyse the active file if it (or the list of project files) changed since the last analysis, then redraw the map and the hints.
+// S.key[file] = what the cached S.graph[file] was computed from. Stale answers (the file changed while we waited) are dropped.
 async function refresh() {
   const n = S.active, src = S.files[n], key = src + '\0' + modsOf();
   if (S.key[n] !== key) {
@@ -316,13 +336,14 @@ async function refresh() {
   draw();
   showHints();
 }
-const traceOf = file => {
+const traceOf = file => { // the values to draw for a file: the final ones, or (while stepping) the replay at step S.step
   if (S.step == null || !S.tl) return S.trace[file];
   if (S.views?.s !== S.step) S.views = { s: S.step, v: NodeMap.viewAt(S.tl, S.step) };
   return S.views.v[file];
 };
+// [file, line] of the step being shown, or [] when the run is finished / there is none
 const nowAt = () => (S.step == null || !S.tl ? [] : [S.tl.files[S.tl.steps[2 * S.step]], S.tl.steps[2 * S.step + 1]]);
-function draw() {
+function draw() { // rebuild the SVG for the active file (graph + trace + folding + theme) and re-apply zoom and highlights
   if (!ready) return; // the loading panel is showing
   const g = S.graph[S.active], box = $('#map');
   if (!g) { box.innerHTML = '<div class="empty">Nothing to map yet.</div>'; S.dim = null; return; }
@@ -341,6 +362,7 @@ function draw() {
   mark();
   if (S.step != null) reveal(box.querySelector('.node.now'), true);
 }
+// the zoom factor in use ('fit' = as wide as the panel, at most 150%)
 const curZoom = () => (P.zoom === 'fit' && S.dim ? Math.min(1.5, ($('#map').clientWidth - 4) / S.dim.w) : +P.zoom || 1);
 function applyZoom() {
   const svg = $('#map svg');
@@ -386,7 +408,7 @@ function reveal(el, center) { // Element.scrollIntoView() does nothing for SVG i
   box.scrollTop += center ? r.top + r.height / 2 - (m.top + m.height / 2) : r.top < m.top ? r.top - m.top : r.bottom > m.bottom ? r.bottom - m.bottom : 0;
   box.scrollLeft += r.left < m.left ? r.left - m.left : r.right > m.right ? r.right - m.right : 0;
 }
-function mark(scroll) {
+function mark(scroll) { // the node under the editor's cursor becomes the selected one; scroll the map to it if asked
   const g = S.graph[S.active];
   act = g ? NodeMap.nodeAt(g, cm.getCursor().line + 1)?.id ?? null : null;
   paint();
@@ -444,7 +466,7 @@ $('#font-up').onclick = () => { P.font = Math.min(28, P.font + 1); applyPrefs();
 const nSteps = () => (S.tl ? S.tl.steps.length / 2 : 0);
 let playT = null;
 function stopPlay() { clearInterval(playT); playT = null; $('#s-play').textContent = '▶'; }
-function setStep(s) { // s = number of steps already executed; null = finished
+function setStep(s) { // s = number of steps already executed; null = finished (shows the final values). Opens the file the step is in.
   if (s != null && s >= nSteps()) s = null;
   S.step = s == null ? null : Math.max(0, s);
   S.views = null;
@@ -480,9 +502,10 @@ $('#s-play').onclick = () => {
 // ---- run / stop / input
 // Python can't block waiting for input() in a worker without special server headers, so input() asks for the answer
 // and the page re-runs the program from the top, feeding it the answers collected so far (random is seeded the same).
+// job = the run in progress: its files (a snapshot), main file, mode, the input() answers so far and the random seed
 let job = null;
 const setRunning = on => { document.querySelectorAll('#run, .runmode').forEach(b => { b.disabled = on || !ready; }); $('#stop').hidden = !on; };
-async function run(mode = 'run') {
+async function run(mode = 'run') { // mode = 'run', or the id of a mode a library added (doctest, unittest ...)
   if (job || !ready) return;
   stopPlay();
   S.tl = null; S.step = null; S.error = null;
@@ -495,7 +518,7 @@ async function run(mode = 'run') {
   out(`▶ ${mode === 'run' ? '' : mode + ' '}${S.active}\n`, 'dim');
   attempt();
 }
-async function attempt() {
+async function attempt() { // one execution of the job; asks for more input and returns early when input() has no answer yet
   setRunning(true);
   setStatus('Running…');
   seen = 0;
@@ -518,7 +541,7 @@ async function attempt() {
   }
   finish(res, t0);
 }
-function finish(res, t0) {
+function finish(res, t0) { // a run ended: store its results, show the final values, jump to the file with the error if any
   job = null;
   setRunning(false);
   setStatus('Ready');
@@ -534,7 +557,7 @@ $('#in').onkeydown = e => {
   $('#inrow').hidden = true;
   attempt();
 };
-function stop() {
+function stop() { // kill the worker (the only way to interrupt Python), close any GUI windows and restart Python in the background
   if (!job) return;
   job = null;
   $('#inrow').hidden = true;
@@ -573,7 +596,7 @@ const safeName = p => {
   const n = p.split(/[\\/]/).pop().replace(/\.py$/i, '').replace(/\W/g, '_') || 'file';
   return (/^\d/.test(n) ? '_' : '') + n + '.py';
 };
-function mergeFiles(got) { // adds / overwrites the given files, keeps the rest
+function mergeFiles(got) { // loose .py files: adds / overwrites the given files, keeps the rest
   const names = Object.keys(got);
   names.forEach(n => { S.files[n] = got[n]; docs[n]?.setValue(got[n]); delete S.trace[n]; });
   S.tl = null; S.step = null; S.error = null;
@@ -591,7 +614,7 @@ function replaceProject(got) { // a zip or a share link is a whole project: ever
   S.open = [names.includes('main.py') ? 'main.py' : names[0]];
   openFile(S.open[0]);
 }
-async function importFiles(list) {
+async function importFiles(list) { // .py files are merged in; a .zip replaces the whole project (after a confirmation)
   const got = {};
   let zipped = false;
   for (const f of list) {
@@ -617,7 +640,7 @@ async function importFiles(list) {
 }
 $('#imp').onclick = () => $('#pick').click();
 $('#pick').onchange = async e => { await importFiles([...e.target.files]); e.target.value = ''; };
-$('#exp').onclick = async () => {
+$('#exp').onclick = async () => { // a zip with every .py and, for each, a PNG of its node map (with the values of the last run)
   setStatus('Exporting…');
   const zip = new JSZip();
   for (const [name, src] of Object.entries(S.files)) {
@@ -631,7 +654,8 @@ $('#exp').onclick = async () => {
   setStatus('Ready');
 };
 
-// a share link is the project, deflated + base64url, in the #fragment (never sent to a server)
+// A share link is the project, deflated + base64url, in the #fragment (never sent to a server): '#p=' + 'z' + data, or
+// 'r' + data when the browser has no CompressionStream (then it is just base64url of the JSON).
 const b64u = u8 => {
   let s = '';
   for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
@@ -654,7 +678,7 @@ $('#share').onclick = async () => {
   if (url.length > 8000) alert('This link is very long and some chat apps may cut it off. Use Export to send a zip instead.');
   else if (location.protocol === 'file:') alert('This page is opened from a file, so the link only works on this computer. Once it is hosted (GitHub Pages) the link works for everyone.');
 };
-async function loadShared() {
+async function loadShared() { // open a #p= share link (validated: file names, sizes) after asking; it replaces the whole project
   const m = /^#p=(.+)$/.exec(location.hash);
   if (!m) return;
   history.replaceState(null, '', location.href.split('#')[0]);
@@ -669,6 +693,7 @@ async function loadShared() {
 addEventListener('hashchange', loadShared);
 
 // ---- resizable panels
+// make a splitter bar draggable: fn(pointermove) sets the CSS variable that sizes the panel
 const drag = (el, fn) => el.addEventListener('pointerdown', e => {
   el.setPointerCapture(e.pointerId);
   const up = () => { el.removeEventListener('pointermove', fn); el.removeEventListener('pointerup', up); cm.refresh(); applyZoom(); };

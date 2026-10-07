@@ -1,7 +1,14 @@
 """turtle library. Built on this editor's tkinter (libs/tkinter): the turtle draws on a Canvas inside a Tk window, so it
 needs no renderer of its own. Covers the everyday API (movement, pen, colours, fill, circle/dot/stamp/write, shapes, Screen
 settings, key/click/timer events, the module-level functions). Not supported: undo, turtle.onclick/ondrag, custom shapes
-and images, setworldcoordinates, tilt."""
+and images, setworldcoordinates, tilt.
+
+How it works. The first Turtle() (or any module-level call such as turtle.forward) creates one shared _Screen: a tkinter Tk window
+holding a 720x540 Canvas. Turtle coordinates have their origin in the middle with y pointing up; _Screen._pt() converts them to
+canvas pixels. A turtle is one polygon on the canvas (redrawn after every move) plus the lines, dots, stamps and text it left
+behind. Animation is real: each step draws, calls canvas.update() (which posts a frame to the page) and sleeps for the speed's
+delay; tracer(0) turns that off until update(). turtle.done() / mainloop() is tkinter's mainloop, so the script ends there and the
+window stays open. The module-level functions (turtle.forward ...) are generated at the bottom: they call a default turtle."""
 import math
 import sys
 import time
@@ -19,18 +26,21 @@ SHAPES = {  # drawn facing "up" (+y); the turtle's heading rotates them
     "square": [(10, -10), (10, 10), (-10, 10), (-10, -10)],
     "triangle": [(10, -5.77), (0, 11.55), (-10, -5.77)],
 }
+# named speeds -> the numbers 0-10 (0 = no animation, 1 = slowest, 10 = fast)
 SPEEDS = {"fastest": 0, "fast": 10, "normal": 6, "slow": 3, "slowest": 1}
 
 
-class TurtleGraphicsError(Exception):
+class TurtleGraphicsError(Exception):  # e.g. an unknown shape name, as in the real module
     pass
 
 
-class Terminator(Exception):
+class Terminator(Exception):  # the real module raises this when its window is closed; kept so `except turtle.Terminator` works
     pass
 
 
 class Vec2D(tuple):
+    """A 2-D vector, a tuple subclass like the real one: v + w, v - w, v * number, v * w (dot product), abs(v), v.rotate(angle)."""
+
     def __new__(cls, x, y):
         return tuple.__new__(cls, (x, y))
 
@@ -73,6 +83,8 @@ def _color(args, mode):
 # ponytail: a drawing is a list of Canvas items and the whole list is re-sent on every flush; fine for thousands of
 # segments, switch to incremental updates in libs/tkinter if huge drawings lag.
 class _Screen:
+    """The one window every turtle draws on. bye() (also the window's x button) forgets it, so the next Turtle() builds a new one."""
+
     _inst = None
 
     def __init__(self):
@@ -85,6 +97,7 @@ class _Screen:
         self._bg, self._tracing, self._delayv, self._count, self._mode, self._turtles = "white", 1, 10, 0, 1.0, []
 
     def _pt(self, x, y):
+        """Turtle coordinates (origin in the middle, y up) -> canvas pixels (origin top-left, y down)."""
         return self._w / 2 + x, self._h / 2 - y
 
     def bgcolor(self, *args):
@@ -162,7 +175,7 @@ class _Screen:
     def ontimer(self, fun, t=0):
         self._root.after(int(t), fun)
 
-    def mainloop(self):
+    def mainloop(self):  # tkinter's mainloop ends the script here; the window stays open
         tk.mainloop()
 
     def exitonclick(self):
@@ -201,6 +214,7 @@ class _Screen:
 
 
 def Screen():
+    """The shared window. Created on first use, and created again if the old one was closed (x button, bye(), or a new run)."""
     if _Screen._inst is None or not _Screen._inst._root.winfo_exists():
         _Screen._inst = _Screen()
     return _Screen._inst
@@ -210,6 +224,9 @@ TurtleScreen = Screen
 
 
 class Turtle:
+    """One turtle. State: _pos (a Vec2D), _h (heading in degrees, 0 = east, counter-clockwise), pen up/down, colours, size, speed,
+    shape. Everything it draws is remembered in _items / _stamps so clear() removes only its own drawing."""
+
     def __init__(self, shape="classic", undobuffersize=1000, visible=True):
         self.screen = Screen()
         self.screen._turtles.append(self)
@@ -269,6 +286,7 @@ class Turtle:
             self.screen._cv.tag_raise(self._item)
 
     def _goto(self, x, y):
+        """Move to (x, y), drawing a line if the pen is down. A turtle with a speed moves in small hops with one animation frame each."""
         scr = self.screen
         x0, y0 = self._pos
         dist = math.hypot(x - x0, y - y0)
@@ -289,6 +307,7 @@ class Turtle:
             scr._cv.coords(self._fillitem, *[v for p in self._fillpts for v in scr._pt(*p)])
 
     def _turn(self, deg, animate=True):
+        """Rotate by deg degrees (positive = counter-clockwise), animated in small steps unless animate is False."""
         hops = 1 + int(abs(deg) / (3 * self._speed)) if animate and self._speed and self.screen._tracing else 1
         for _ in range(hops):
             self._h = (self._h + deg / hops) % 360
@@ -534,6 +553,7 @@ _default = None
 
 
 def _the_turtle():
+    """The default turtle behind turtle.forward() and friends; replaced if its window is gone (a new run)."""
     global _default
     if _default is None or not _default.screen._root.winfo_exists():
         _default = Turtle()
@@ -541,6 +561,8 @@ def _the_turtle():
 
 
 def _forward_to(owner, name):
+    """A module-level function that calls method `name` on whatever owner() returns (the default turtle, or the Screen)."""
+
     def f(*a, **k):
         return getattr(owner(), name)(*a, **k)
     f.__name__ = name
@@ -559,6 +581,7 @@ done = mainloop  # noqa: F821  (created just above)
 
 
 def install():
+    """Hook (once at start-up): make `import turtle` work, exposing every public name of this file."""
     mod = types.ModuleType("turtle")
     mod.__dict__.update({k: v for k, v in globals().items() if not k.startswith("_") and not isinstance(v, types.ModuleType) and k != "install"})
     mod.__all__ = sorted(mod.__dict__.keys() - {"__name__", "__doc__", "__package__", "__loader__", "__spec__", "__builtins__"})

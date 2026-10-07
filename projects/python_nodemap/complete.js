@@ -17,7 +17,9 @@ const PyComplete = (() => {
       if (a[1]) alias[a[2]] = a[1].split('.').pop(); // import tkinter as tk
       else alias[a[5]] = a[4]; // from tkinter import ttk as t
     }
+    // members of module m: a registered library's list, or the top-level names of one of the project's own files
     const members = m => MOD[alias[m] || m] || (proj[m] ? top(proj[m]) : null);
+    // what stands before the cursor decides the list: `from x import |`, `import |`, `x.|`, or a plain word. The first match wins.
     let m, prefix, list;
     if ((m = /^\s*from\s+(\w+)\s+import\s+(?:\w+\s*,\s*)*(\w*)$/.exec(line))) { prefix = m[2]; list = members(m[1]) || []; }
     else if ((m = /^\s*(?:from|import)\s+(\w*)$/.exec(line))) { prefix = m[1]; list = [...importable, ...Object.keys(proj)]; }

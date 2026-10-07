@@ -34,7 +34,8 @@ seconds; the downloaded files are cached).
 | `worker.js` | One function, `workerMain`, whose source text becomes a Blob worker (so it can't use outside variables). |
 | `runner.py` | The Python backend (see below). Knows nothing about specific libraries. |
 | `libs/<name>/` | `lib.js` manifest (+ view for GUI libraries) and optional `lib.py`. |
-| `tests/test_backend.py` | Backend tests. |
+| `tests/test_backend.py` | Backend tests ([tests/README.md](../tests/README.md)). |
+| `libs/README.md`, `docs/examples/clicker/` | What each library supports; a complete tiny GUI library to copy from. |
 
 ## Start-up
 
@@ -48,6 +49,24 @@ seconds; the downloaded files are cached).
 
 Pyodide is pinned (`PYODIDE` in `app.js`) to 0.29.x because Pyodide 314+ only supports *module* workers, and a classic Blob
 worker is simpler. Lifting the pin means testing worker creation in Chrome and Firefox.
+
+## Messages between the page and the worker
+
+Every request carries an `id`; `W.call(type, data)` in `app.js` returns a promise that the matching reply settles. Other messages
+are pushed by the worker whenever it likes.
+
+| Direction | Message | Meaning |
+| --- | --- | --- |
+| page → worker | `init {url, runner, libs, allowed, sizes}` | Download and start Pyodide, run `runner.py`, `configure()`, `load_lib()` each library. |
+| page → worker | `analyze {src, mods}` | Static analysis of one file. Reply `{id, result}` with the JSON string. |
+| page → worker | `run {files, main, mode, answers, seed}` | Run a program. Reply `{id, result}` with the JSON string. |
+| page → worker | `guievent {lib, ev}` | The user did something in a library's window (no reply of its own; frames come back as `gui`). |
+| page → worker | `guireset` | The project was replaced: stop the windows and their timers. |
+| worker → page | `{id, result}` or `{id, error}` | The reply to a request. |
+| worker → page | `out {cls, text}` | Console output, batched (`cls` is `''` for stdout, `'err'` for stderr). |
+| worker → page | `progress {loaded, total}` | Bytes of Pyodide downloaded so far, for the loading bar. |
+| worker → page | `gui {lib, tree}` | A frame for that library's view; `tree: null` means close everything. |
+| worker → page | `trace {files}` | New values for the node map after a window callback ran. |
 
 ## Analysis (`analyze`)
 
@@ -101,7 +120,7 @@ and search are done in `app.js` by toggling CSS classes on the existing SVG, wit
 
 ## GUI libraries (tkinter, turtle)
 
-A library that opens windows registers *hooks* (`gui_hooks` in its `lib.py`, [details](ADDING_A_LIBRARY.md#gui-libraries))
+A library that opens windows registers *hooks* (`gui_hooks` in its `lib.py`, [details](ADDING_A_LIBRARY.md#4-gui-libraries))
 and a *view* (in its `lib.js`). The flow:
 
 1. While the script runs, the library posts its widget tree (`set_post`) whenever it wants a frame (`update()`); the
@@ -119,6 +138,16 @@ The tkinter view (`libs/tkinter/lib.js`) is the biggest piece of front-end code:
 first slave takes a band of the cavity, the rest share what is left), `grid` as CSS grid, `place` as absolutely positioned
 boxes. Widget DOM elements are reused between updates, and `Entry`/`Text` values are only written when Python changed them
 (a revision counter), so typing is never overwritten by a stale value.
+
+## Limits at a glance
+
+| Limit | Where | Why |
+| --- | --- | --- |
+| 1.5 million traced lines | `LIMIT` in `runner.py` | Stops what is probably an infinite loop (the message says so). |
+| 30,000 recorded steps / 120,000 value facts | `MAXSTEPS`, `MAXFACTS` | Bounds the memory of the step timeline; the run itself continues, only the replay is cut (`trunc`). |
+| 400,000 characters of output | `OUTLIM` | A runaway `print` loop would freeze the console. |
+| 50 files, 500,000 characters each | `loadShared()` in `app.js` | Validates a share link before it replaces your project. |
+| Pyodide 0.29.x | `PYODIDE` in `app.js` | Newer versions need module workers (see Start-up). |
 
 ## Persistence and sharing
 

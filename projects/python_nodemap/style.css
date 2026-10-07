@@ -1,4 +1,6 @@
-/* VS Code "Dark+" / "Light+" look. The node map panel stays dark in both themes (it is a canvas). */
+/* VS Code "Dark+" / "Light+" look. Theme colours are CSS variables on <body>; body.light overrides them. The node map draws itself in
+   the matching palette (nodemap.js, passed in as opts.light) and its panel background follows the theme (see "node map panel" below).
+   Sections: toolbar, panels and splitters, node map panel, console, status bar, CodeMirror themes, editor overlays, tkinter windows. */
 body {
   --bg: #1e1e1e; --side: #252526; --bar: #3c3c3c; --tab: #2d2d2d; --text: #ccc; --dim: #969696; --line: #2b2b2b;
   --hover: #2a2d2e; --sel: #37373d; --btn: #4a4a4a; --btn-h: #5a5a5a; --btn-t: #fff; --input: #3c3c3c; --fs: 14px;
@@ -25,6 +27,7 @@ input { font: inherit; color: var(--text); background: var(--input); border: 1px
 input:focus { outline: 1px solid #0078d4; border-color: transparent; }
 .sp { flex: 1; }
 
+/* toolbar */
 #bar { height: 35px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--bar); }
 .brand { font-weight: 600; margin-right: 12px; }
 
@@ -35,6 +38,7 @@ input:focus { outline: 1px solid #0078d4; border-color: transparent; }
 .h button { padding: 0 8px; background: transparent; color: var(--text); font-size: 14px; line-height: 20px; }
 .h button:hover { background: var(--hover); }
 
+/* explorer | editor | node map */
 #work { flex: 1; min-height: 0; display: flex; }
 #side { width: 190px; flex: none; display: flex; flex-direction: column; background: var(--side); }
 #files { list-style: none; margin: 0; padding: 0; overflow: auto; }
@@ -85,7 +89,7 @@ input:focus { outline: 1px solid #0078d4; border-color: transparent; }
 .pbar { height: 8px; margin: 14px 0 10px; background: #1e2633; border-radius: 4px; overflow: hidden; }
 #pbar { height: 100%; width: 0; background: linear-gradient(90deg, #0e8ee9, #4fc1ff); border-radius: 4px; transition: width .2s ease-out; }
 .loading .note { font-size: 12px; }
-/* wire filters (CSS only, so the layout doesn't jump) */
+/* wire filters (CSS only, so the layout doesn't jump). The classes are toggled on #map by applyPrefs() in app.js */
 #map.no-data .wire.data:not(.back), #map.no-call .wire.call, #map.no-back .wire.back { display: none; }
 #map.only svg.f .wire:not(.on) { display: none; }
 
@@ -170,7 +174,8 @@ body.light .empty { color: #6b7590; }
 body.light .loading #ptext { color: #2a3550; }
 body.light .pbar { background: #dfe5ef; }
 
-/* tkinter windows (they look like light Windows windows in both themes) */
+/* tkinter windows (they look like light Windows windows in both themes). #tkhost is the layer every GUI library draws its windows in;
+   it ignores the mouse itself so only the windows (and dialogs) catch it. */
 #tkhost { position: fixed; inset: 0; pointer-events: none; z-index: 60; }
 .tkwin { position: absolute; pointer-events: auto; display: flex; flex-direction: column; background: #f0f0f0; color: #000; border: 1px solid #5c6370; border-radius: 7px 7px 2px 2px; box-shadow: 0 10px 32px rgba(0, 0, 0, .5); font: 9pt "Segoe UI", Tahoma, sans-serif; outline: none; max-width: 96vw; max-height: 92vh; }
 .tkwin:focus-within { box-shadow: 0 12px 36px rgba(0, 0, 0, .6), 0 0 0 1px #0078d4; }

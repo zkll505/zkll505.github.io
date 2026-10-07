@@ -16,6 +16,7 @@
         <link rel="stylesheet" href="style.css" />
     </head>
     <body>
+        <!-- toolbar. #modes is filled in by app.js with the run buttons libraries register (Doctest, Tests ...) -->
         <header id="bar">
             <span class="brand">Python Nodemap</span>
             <button id="run" class="pri" title="Run (Ctrl+Enter)" disabled>
@@ -47,6 +48,7 @@
             <input id="pick" type="file" accept=".zip,.py" multiple hidden />
         </header>
 
+        <!-- explorer | editor | node map -->
         <div id="work">
             <aside id="side">
                 <div class="h">
@@ -148,6 +150,7 @@
             </section>
         </div>
 
+        <!-- the floating windows opened by GUI libraries (tkinter, turtle) are drawn here -->
         <div id="tkhost"></div>
         <div id="hsplit" class="split"></div>
         <section id="con">
@@ -171,6 +174,7 @@
             <span id="libs"></span>
         </footer>
 
+        <!-- third-party code, from CDNs: CodeMirror 5 (the editor) and JSZip (zip import/export). Pyodide is loaded by the worker. -->
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
@@ -189,6 +193,7 @@
         <script src="libs/unittest/lib.js"></script>
         <script src="libs/tkinter/lib.js"></script>
         <script src="libs/turtle/lib.js"></script>
+        <!-- worker.js only defines workerMain(); app.js turns its source text into the Web Worker that runs Python -->
         <script src="worker.js"></script>
         <script src="nodemap.js"></script>
         <script src="complete.js"></script>

@@ -3,7 +3,17 @@ Scale, Spinbox, Listbox, Canvas, Menu, OptionMenu, ttk.Combobox/Progressbar/Sepa
 pack/grid/place, bind, after, update, messagebox, simpledialog (answers immediately), font.Font.
 Not supported: images, file dialogs, Text tags, scrollbars (widgets scroll by themselves), ttk themes/Notebook/Treeview.
 A window that was shown stays open after the script ends (like IDLE/Thonny) and its callbacks run when you click, type or a timer fires.
-mainloop() ends the script (code after it never runs)."""
+mainloop() ends the script (code after it never runs).
+
+How it works. Widgets are ordinary Python objects (Misc and its subclasses) that only remember their options. Nothing is drawn
+here: _snapshot() turns the live windows into a JSON tree and post()s it to the page, where libs/tkinter/lib.js draws it as HTML.
+A node of that tree is {id, t (the widget kind), o (options), r (revision), m (pack/grid/place settings), k (children),
+cw (grid row/column weights)} plus whatever the widget's _extra() adds (its text value, list items, canvas items ...).
+Going the other way, the page sends events (a click, typing, a key press, a menu choice) and dispatch() runs the matching
+callbacks. `r` is bumped only when PYTHON changes a value; the page overwrites what the user typed only when `r` changes.
+Time never really passes between events: after() timers are held in _ST["after"] and the page calls tick() when one is due.
+The functions at the bottom (dispatch, tick, pump, active, finish, reset, set_post and the exit exception) are the hooks
+runner.py drives; see gui_hooks."""
 import itertools, json, re, sys, time, traceback, types
 
 
@@ -15,11 +25,20 @@ class _MainloopExit(BaseException):
     pass
 
 
-_ids = itertools.count(1)
+_ids = itertools.count(1)  # widget ids, unique for the whole session
+# All mutable library state lives here (it survives between runs, so reset() must clear it):
+#   roots    open Tk/Toplevel windows (the first is the main window)       dirty    something changed since the last frame
+#   after    pending after() timers: [due time in ms, id, func, args]      afterid  counter for after() ids
+#   dialogs  messagebox popups still to be shown                           focus    [widget id, serial] from focus_set()
+#   fn       focus serial counter                                          post     function that sends a JSON frame to the page
+#   shown    a frame was asked for (update()/mainloop()); until then a script that builds widgets and ends shows nothing
+#   notes    one-time "answered immediately" notices already printed       all      bind_all() bindings
+#   flushed  time of the last frame (throttles update() in tight loops)
 _ST = {"roots": [], "dirty": False, "after": [], "afterid": 0, "dialogs": [], "focus": None, "fn": 0, "shown": False,
        "post": None, "notes": set(), "all": {}, "flushed": 0.0}
-_REG = {}
+_REG = {}  # widget id -> widget (events from the page name widgets by id)
 
+# the constants of tkinter.constants: `from tkinter import *` exports them
 NO = FALSE = OFF = 0
 YES = TRUE = ON = 1
 N, S, W, E, NW, SW, NE, SE, NS, EW, NSEW, CENTER = "n", "s", "w", "e", "nw", "sw", "ne", "se", "ns", "ew", "nsew", "center"
@@ -37,6 +56,7 @@ READABLE, WRITABLE = 2, 4
 
 
 def _dirty():
+    """Something changed: a new frame is due (it is sent on the next update(), event or timer)."""
     _ST["dirty"] = True
 
 
@@ -50,12 +70,14 @@ _SYS = {"systembuttonface": "#f0f0f0", "systemwindow": "#ffffff", "systemwindowt
 
 
 def _opts(cnf, kw):
+    """Merge a cnf dict and keyword options into one dict, with long names shortened (background -> bg)."""
     d = dict(cnf) if isinstance(cnf, dict) else {}
     d.update(kw)
     return {_ALIAS.get(k, k): v for k, v in d.items()}
 
 
 def _color(c):
+    """A Tk colour -> a CSS colour: gray50-style names and the system colours are translated, the rest passes through."""
     if not isinstance(c, str):
         return c
     c = c.strip().lower().replace(" ", "")
@@ -67,6 +89,7 @@ def _color(c):
 
 
 def _pair(v):
+    """padx=5 or padx=(2, 8) -> [left, right] (same for pady)."""
     try:
         if isinstance(v, (tuple, list)):
             a = float(v[0])
@@ -84,6 +107,7 @@ def _num(v, default=0.0):
 
 
 def _fd(family, size, styles=()):
+    """A font as the page wants it: {f family, s size, px size is in pixels (negative in Tk), b bold, i italic, u underline, o overstrike}."""
     styles = " ".join(styles) if not isinstance(styles, str) else styles
     try:
         size = int(size) if size is not None else None
@@ -94,6 +118,7 @@ def _fd(family, size, styles=()):
 
 
 def _font(f):
+    """Any way Tk accepts a font ("Arial 12 bold", ("Arial", 12, "bold"), a Font object) -> the dict _fd() builds."""
     if f is None:
         return None
     if isinstance(f, Font):
@@ -114,6 +139,7 @@ def _font(f):
 
 
 def _jv(v):
+    """Make an option value JSON-safe (anything exotic becomes its str())."""
     if v is None or isinstance(v, (str, int, float, bool)):
         return v
     if isinstance(v, (list, tuple)):
@@ -124,6 +150,8 @@ def _jv(v):
 
 
 class Font:
+    """tkinter.font.Font. Text is measured with a rough per-character estimate: only the browser knows real widths."""
+
     def __init__(self, root=None, font=None, name=None, exists=False, **kw):
         self._d = {"family": "TkDefaultFont", "size": 10, "weight": "normal", "slant": "roman", "underline": 0, "overstrike": 0}
         if font is not None:
@@ -161,6 +189,9 @@ class Font:
 # ------------------------------------------------------------------ variables
 
 class Variable:
+    """Base of StringVar / IntVar / DoubleVar / BooleanVar. _ws = the widgets showing this value (they redraw when it changes),
+    _tr = (mode, callback) trace entries. set(value, _src) skips the widget that caused the change (_src): it already shows it."""
+
     _default = ""
 
     def __init__(self, master=None, value=None, name=None):
@@ -236,6 +267,8 @@ class BooleanVar(Variable):
 # ------------------------------------------------------------------ events and bindings
 
 class Event:
+    """The object bound callbacks receive (x, y, char, keysym, num, widget ...), filled in from what the page reported."""
+
     def __init__(self, **kw):
         self.widget = None
         self.x = self.y = self.x_root = self.y_root = 0
@@ -247,10 +280,12 @@ class Event:
         return "<Event %s widget=%s x=%s y=%s keysym=%r>" % (self.type, self.widget, self.x, self.y, self.keysym)
 
 
+# modifier words in an event sequence such as <Control-Shift-Button-1>; everything else is the event type / detail
 _MODS = {"Control", "Shift", "Alt", "Lock", "Double", "Triple", "Any", "B1", "B2", "B3", "Button1", "Button2", "Button3", "Mod1", "Command", "Meta"}
 
 
 def _parts(seq):
+    """Split an event sequence: "<Control-a>" gives ({"Control"}, ["a"]), the modifiers then the type and detail ("<1>" means Button 1)."""
     parts = [p for p in seq.strip("<>").split("-") if p]
     mods = {p for p in parts if p in _MODS}
     rest = [p for p in parts if p not in _MODS]
@@ -260,6 +295,7 @@ def _parts(seq):
 
 
 def _seq_match(seq, e):
+    """Does the binding `seq` fire for the page event dict `e` (k = press/release/key/motion ..., keysym, num, ctrl ...)?"""
     if seq.startswith("<<"):
         return False
     mods, rest = _parts(seq)
@@ -292,6 +328,7 @@ def _seq_match(seq, e):
 
 
 def _category(seq):
+    """Which kind of page event a binding needs ("press", "key", "motion" ...), so the page only forwards events someone listens to."""
     if seq.startswith("<<"):
         return None
     mods, rest = _parts(seq)
@@ -303,12 +340,14 @@ def _category(seq):
 
 
 def _window(w):
+    """The Tk/Toplevel a widget lives in (None if it has been detached)."""
     while w is not None and not isinstance(w, (Tk, Toplevel)):
         w = w.master
     return w
 
 
 def _tags(w):
+    """Where bindings are looked up for widget w: the widget itself, then its window (a simplified Tk bindtags)."""
     out = [w]
     win = _window(w)
     if win is not None and win is not w:
@@ -332,6 +371,8 @@ def _call(f, *args):
 
 
 def _fire(w, e):
+    """Deliver page event `e` to widget w: its own bindings, its window's, then bind_all(), then canvas items.
+    A callback that returns "break" stops the search."""
     ev = Event(widget=w, x=int(e.get("x", 0)), y=int(e.get("y", 0)), x_root=int(e.get("rx", 0)), y_root=int(e.get("ry", 0)),
                num=int(e.get("num", 0)), delta=int(e.get("delta", 0)), char=e.get("char", ""), keysym=e.get("keysym", ""),
                keycode=int(e.get("code", 0)), type={"press": "4", "release": "5", "key": "2", "keyup": "3", "motion": "6"}.get(e["k"], "0"))
@@ -351,6 +392,7 @@ def _fire(w, e):
 
 
 def _virtual(w, name):
+    """Fire a virtual event such as <<ListboxSelect>> or <<ComboboxSelected>> at widget w."""
     ev = Event(widget=w, type="35")
     for tag in _tags(w):
         for f in list(tag._binds.get(name, [])):
@@ -360,6 +402,11 @@ def _virtual(w, name):
 # ------------------------------------------------------------------ base widget
 
 class Misc:
+    """Base of every widget and window. Options live in _o (always long-name -> short-name normalised), children in _kids, the
+    geometry-manager settings in _mgr ({"k": "pack"|"grid"|"place", ...}), and _rev counts changes made by Python (see the
+    module docstring). A widget class sets _kind (what the page draws), _container (can hold children) and may define
+    _extra() (more fields for the page), _uivalue()/_click() etc. (what to do when the page reports user input)."""
+
     _kind = "widget"
     _container = False
     _hidden = False  # not laid out by a geometry manager (windows, menus)
@@ -438,7 +485,7 @@ class Misc:
     def keys(self):
         return list(self._o)
 
-    def _pub(self):
+    def _pub(self):  # the options the page needs: no callbacks or Variables; colours, fonts and padding converted
         out = {}
         for k, v in self._o.items():
             if isinstance(v, (Variable, Misc)) or callable(v):
@@ -457,7 +504,7 @@ class Misc:
     def _extra(self):
         return {}
 
-    def _node(self):
+    def _node(self):  # this widget (and, for containers, everything inside it) as the JSON tree the page draws
         d = {"id": self._id, "t": self._kind, "o": self._pub(), "r": self._rev}
         d.update(self._extra())
         if self._mgr:
@@ -467,7 +514,7 @@ class Misc:
             d["cw"] = self._cw
         return d
 
-    def _shown_kids(self):
+    def _shown_kids(self):  # children that are laid out, in pack order; widgets with no geometry manager call yet are not shown
         kids = [k for k in self._kids if k._alive and not k._hidden and k._mgr]
         return sorted(kids, key=lambda k: k._mgr["ord"] if k._mgr["k"] == "pack" else 0)
 
@@ -623,6 +670,7 @@ class Misc:
 
     # --- timers and the event loop
     def after(self, ms, func=None, *args):
+        """Schedule func(*args) after ms milliseconds; the page calls tick() when it is due. With no func it just sleeps."""
         if func is None:
             time.sleep(_num(ms) / 1000)
             return None
@@ -647,7 +695,7 @@ class Misc:
         _ST["shown"] = True
         _flush()
 
-    def mainloop(self, n=0):
+    def mainloop(self, n=0):  # the script ends here (code after it never runs); the window stays open and callbacks keep working
         _ST["shown"] = True
         _flush()
         raise _MainloopExit()
@@ -673,7 +721,7 @@ class Misc:
                 _ST["after"].clear()
         _dirty()
 
-    # --- information (sizes are approximate: layout happens in the page)
+    # --- information (sizes are approximate: the real layout happens in the browser, so winfo_width() etc. are estimates)
     def _gsize(self):
         m = re.match(r"(\d+)x(\d+)", str(getattr(self, "_geom", "")))
         return (int(m.group(1)), int(m.group(2))) if m else (None, None)
@@ -736,6 +784,8 @@ class Misc:
 
 
 class _Window(Misc):
+    """Common part of Tk and Toplevel: title, geometry, protocol(WM_DELETE_WINDOW), minsize ... A window registers itself in _ST["roots"]."""
+
     _container = True
     _hidden = True
 
@@ -869,7 +919,8 @@ class Button(Misc):
 
 
 class _Text(Misc):
-    """An Entry-like widget: one string that the user can edit."""
+    """An Entry-like widget: one string that the user can edit (Entry, Spinbox, ttk.Combobox). The text is kept in _val, or in
+    the linked textvariable; _setval() is a change made by Python, _uivalue() one made by the user typing."""
 
     def _init_state(self):
         self._val = ""
@@ -1276,6 +1327,9 @@ def _flat(args):
 
 
 class Canvas(Misc):
+    """A drawing surface. Items are dicts {id, t (line/rectangle/oval/polygon/arc/text), c (flat coordinate list), o (options),
+    tags}; the whole item list is re-sent (and redrawn by the page) whenever _rev changes. turtle draws on one of these."""
+
     _kind = "canvas"
 
     def _init_state(self):
@@ -1377,7 +1431,7 @@ class Canvas(Misc):
     def find_all(self):
         return tuple(i["id"] for i in self._items)
 
-    def _bbox(self, i):
+    def _bbox(self, i):  # bounding box of an item; text sizes are estimated (about 0.6 x font size per character)
         c = i["c"]
         if i["t"] == "text":
             s = _font(i["o"].get("font"))
@@ -1437,7 +1491,7 @@ class Canvas(Misc):
             self._tagb.append((spec, sequence, func))
             _dirty()
 
-    def _fire_items(self, e, ev):
+    def _fire_items(self, e, ev):  # tag_bind(): the topmost item under the mouse gets the click / motion
         if not self._tagb or e["k"] not in ("press", "release", "double", "motion"):
             return
         x, y = ev.x, ev.y
@@ -1464,6 +1518,8 @@ class Canvas(Misc):
 # ------------------------------------------------------------------ menus
 
 class Menu(Misc):
+    """A menu: a list of entries. Attached to a window with root.config(menu=m); entry ids look like "<menu id>:<index>"."""
+
     _kind = "menu"
     _hidden = True
 
@@ -1535,6 +1591,7 @@ class Menu(Misc):
 # ------------------------------------------------------------------ the event loop, driven by the page
 
 def _tick():
+    """Run every after() timer that is due, oldest first."""
     now = time.monotonic() * 1000
     due = sorted([a for a in _ST["after"] if a[0] <= now], key=lambda a: a[0])
     for a in due:
@@ -1544,12 +1601,14 @@ def _tick():
 
 
 def _next():
+    """Milliseconds until the next timer (None = no timer): the page calls tick() after that long."""
     if not _ST["after"] or not any(r._alive for r in _ST["roots"]):
         return None
     return max(0, int(min(a[0] for a in _ST["after"]) - time.monotonic() * 1000))
 
 
 def _wants():
+    """The kinds of page events some binding listens to, so the page does not flood us with mouse moves nobody asked for."""
     seqs = list(_ST["all"])
     for w in _REG.values():
         seqs.extend(w._binds)
@@ -1559,6 +1618,7 @@ def _wants():
 
 
 def _snapshot():
+    """Everything the page needs to draw right now, as a dict (and mark the state as sent)."""
     out = {"wins": [r._wnode() for r in _ST["roots"] if r._alive], "dialogs": _ST["dialogs"][:], "wants": _wants(), "focus": _ST["focus"]}
     _ST["dirty"] = False
     _ST["dialogs"].clear()
@@ -1566,6 +1626,7 @@ def _snapshot():
 
 
 def _flush():
+    """Post a frame if something changed (and the script has asked for windows to be shown, or a dialog is waiting)."""
     if (_ST["dirty"] or _ST["dialogs"]) and _ST["post"] and (_ST["shown"] or _ST["dialogs"]):
         _ST["flushed"] = time.monotonic()
         _ST["post"](json.dumps(_snapshot()))
@@ -1576,7 +1637,7 @@ def _destroy_all():
         r.destroy()
 
 
-def _menu_click(path):
+def _menu_click(path):  # path = "<menu id>:<entry index>"
     mid, _, n = str(path).partition(":")
     m = _REG.get(int(mid))
     if isinstance(m, Menu):
@@ -1584,6 +1645,8 @@ def _menu_click(path):
 
 
 def dispatch(ev):
+    """Hook: the page reports something the user did. ev["t"] says what: menu (a menu entry), close (the window's x button, honours
+    protocol("WM_DELETE_WINDOW")), click (button), value (typing / choosing), check, radio, sel (listbox), ev (mouse / key events)."""
     t = ev.get("t")
     w = _REG.get(ev.get("id"))
     if t == "menu":
@@ -1608,10 +1671,12 @@ def dispatch(ev):
 
 
 def tick():
+    """Hook: a timer from pump()["next"] is due."""
     _tick()
 
 
 def pump():
+    """Hook: what the page should know now: {alive, next (ms to the next timer or None), tree (only if something changed)}."""
     out = {"alive": bool([r for r in _ST["roots"] if r._alive]) and _ST["shown"], "next": _next()}
     if (_ST["dirty"] or _ST["dialogs"]) and (_ST["shown"] or _ST["dialogs"]):
         out["tree"] = _snapshot()
@@ -1628,6 +1693,7 @@ def finish():  # the script ended and no window was ever shown: drop the unused 
 
 
 def reset():
+    """Hook: a new run, Stop, or a replaced project: close every window and forget every timer, binding and dialog."""
     for r in _ST["roots"]:
         r._alive = False  # libraries that keep a window around between runs (turtle's Screen) must see that it is gone
     _ST["roots"].clear()
@@ -1640,12 +1706,13 @@ def reset():
 
 
 def set_post(f):
+    """Hook: runner.py hands us the function that pushes a JSON frame to the page (this is how animations stream mid-script)."""
     _ST["post"] = f
 
 
 # ------------------------------------------------------------------ dialogs (they can't wait for a click, so they answer at once)
 
-def _note(what, answer):
+def _note(what, answer):  # tell the student, once per kind of dialog, that the editor answered for them
     if what not in _ST["notes"]:
         _ST["notes"].add(what)
         print("(note: %s can't wait for a click in this editor, so it answered %r)" % (what, answer))
@@ -1674,6 +1741,9 @@ def _ask_none(name):
 
 
 def install():
+    """Hook (called once at start-up): build the fake `tkinter` package in sys.modules, with the submodules messagebox,
+    simpledialog, font, ttk and constants. `from tkinter import ttk` works through the module-level __getattr__ below."""
+
     def mod(name, **attrs):
         m = types.ModuleType(name)
         m.__dict__.update(attrs)

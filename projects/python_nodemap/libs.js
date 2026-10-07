@@ -10,14 +10,16 @@ const PyLibs = (() => {
   const libs = [];
   const words = s => (s || '').split(/\s+/).filter(Boolean);
   return {
+    /** register a manifest (fields: docs/ADDING_A_LIBRARY.md). The order of add() calls, i.e. of the <script> tags, is the load order. */
     add(lib) {
       if (!lib.name || libs.some(l => l.name === lib.name)) throw new Error(`library "${lib.name}" has no name or is registered twice`);
       libs.push(lib);
     },
-    names: () => libs.map(l => l.name),
+    names: () => libs.map(l => l.name), // also the import allow-list (runner.configure) and the modules autocomplete offers
     modes: () => libs.flatMap(l => (l.modes || []).map(m => ({ ...m, lib: l.name }))), // extra run buttons
-    views: () => libs.filter(l => l.view),
+    views: () => libs.filter(l => l.view), // the libraries that draw windows; app.js connects each view's events to the worker
     view: name => (libs.find(l => l.name === name) || {}).view,
+    // close every library's windows: a new run, Stop, or a replaced project
     closeViews: () => libs.forEach(l => l.view && l.view.apply(null)),
     /** autocomplete: { module: [members] }, including submodules such as tkinter.messagebox */
     members() {

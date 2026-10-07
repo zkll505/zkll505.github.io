@@ -178,4 +178,22 @@ Things to get right (each was a real bug):
 - [ ] Nothing at import time; state is reset between runs.
 - [ ] A test in `tests/test_backend.py` (or the example/walkthrough it relates to).
 - [ ] Tried in Chrome and Firefox; Run twice, Stop, and project replace behave.
-- [ ] The README's library table has a row for it, and anything it can't do is stated in the library's docstring.
+- [ ] The README's library table and [libs/README.md](../libs/README.md) have a row for it, and anything it can't do is stated in the
+      library's docstring.
+
+## 7. Troubleshooting
+
+| Symptom | Likely cause |
+| --- | --- |
+| `ImportError: 'mylib' isn't available here` | The manifest isn't registered: the `<script>` line is missing from `index.html`, or `name` differs from what students import. |
+| "library ... is registered twice" in the console | Two `PyLibs.add` calls use the same `name`. |
+| Autocomplete knows nothing about it | `members` (names after `mylib.`) or `methods` (names after `something.`) is missing from the manifest. |
+| The page says "Could not load Python" and quotes your exception | `lib.py` raised while loading, or its `python:` path is wrong (the message says which URL failed). It runs at start-up, so test it by reloading. |
+| A run button is missing, or does nothing | The `modes` entry's `id` must equal the key in `run_modes`. |
+| Works the first time, not the second | State kept in a module global survived the previous run. Reset it in the `reset` hook (or re-validate it, as turtle's `Screen()` does). |
+| A window survives **Run**, **Stop** or an import | `reset()` doesn't close it, or the view's `apply(null)` doesn't remove it. |
+| Typing in your window loses focus or text | The view re-created elements instead of reusing them, or wrote a value into an input the user is editing. |
+| Nothing works when `index.html` is opened from disk | It has to be served (`python -m http.server`); see the README. |
+
+A quick way to try a library without touching `index.html` permanently: add the `<script>` line, reload, and remove it again. The
+example in [`docs/examples/clicker/`](examples/clicker/README.md) is set up that way.
