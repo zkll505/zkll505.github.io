@@ -100,6 +100,25 @@ const setStatus = t => { $('#st').textContent = t; };
 const modsOf = () => Object.keys(S.files).map(f => f.slice(0, -3)).sort();
 const okName = n => /^[A-Za-z_]\w*\.py$/.test(n);
 
+// ---- the mailbox. While a program runs, its worker is busy and can't receive messages, so a key press or click made during a
+// `while True:` animation would never reach it. sw.js (a service worker) keeps those events in a mailbox instead, and the running
+// program reads it at each window update. The Python worker has to be created AFTER the service worker controls the page, because
+// a worker inherits that control; that is why start-up waits here (first visit only, and at most 2.5 s). No service worker
+// (private window, old browser, plain http)? Everything still works, but a program sees no events until it finishes.
+const mailboxReady = (async () => {
+  if (!navigator.serviceWorker) return false;
+  try {
+    await navigator.serviceWorker.register('sw.js');
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) {
+      await Promise.race([new Promise(r => navigator.serviceWorker.addEventListener('controllerchange', r, { once: true })), new Promise(r => setTimeout(r, 2500))]);
+    }
+  } catch {}
+  return !!navigator.serviceWorker.controller;
+})();
+const mailboxUrl = () => (navigator.serviceWorker?.controller ? new URL('__mailbox', location.href).href : ''); // '' = no mailbox
+let pyBusy = false; // Python is executing a run right now (its worker can't take messages): window events go to the mailbox
+
 // ---- Python lives in a worker (worker.js + runner.py + libs/*/lib.py), so the page never freezes and Stop works
 const W = {
   n: 0, pend: new Map(), onOut: () => {}, onProgress: () => {},
@@ -111,21 +130,21 @@ const W = {
     }));
   },
   start() {
-    try {
+    W.ready = mailboxReady.then(() => {
       W.w = new Worker(URL.createObjectURL(new Blob([`(${workerMain})()`], { type: 'text/javascript' })));
-    } catch (e) { W.ready = Promise.reject(e); return; }
-    W.w.onmessage = ({ data: m }) => {
-      if (m.type === 'out') return W.onOut(m.text, m.cls);
-      if (m.type === 'progress') return W.onProgress(m.loaded, m.total);
-      if (m.type === 'gui') return PyLibs.view(m.lib)?.apply(m.tree);
-      if (m.type === 'trace') return liveTrace(m.files);
-      const p = W.pend.get(m.id);
-      W.pend.delete(m.id);
-      if (p) m.error ? p.rej(new Error(m.error)) : p.res(m.result);
-    };
-    W.w.onerror = e => out(`Python worker error: ${e.message || e}\n`, 'err');
-    W.src ??= Promise.all([fetchText('runner.py'), PyLibs.load()]); // fetched once; a restart (Stop) reuses it
-    W.ready = W.src.then(([runner, libs]) => W.call('init', { url: PYODIDE, runner, libs, allowed: PyLibs.names(), sizes: PYODIDE_SIZES }));
+      W.w.onmessage = ({ data: m }) => {
+        if (m.type === 'out') return W.onOut(m.text, m.cls);
+        if (m.type === 'progress') return W.onProgress(m.loaded, m.total);
+        if (m.type === 'gui') return PyLibs.view(m.lib)?.apply(m.tree);
+        if (m.type === 'trace') return liveTrace(m.files);
+        const p = W.pend.get(m.id);
+        W.pend.delete(m.id);
+        if (p) m.error ? p.rej(new Error(m.error)) : p.res(m.result);
+      };
+      W.w.onerror = e => out(`Python worker error: ${e.message || e}\n`, 'err');
+      W.src ??= Promise.all([fetchText('runner.py'), PyLibs.load()]); // fetched once; a restart (Stop) reuses it
+      return W.src.then(([runner, libs]) => W.call('init', { url: PYODIDE, runner, libs, allowed: PyLibs.names(), sizes: PYODIDE_SIZES }));
+    });
     W.ready.catch(() => {});
   },
   restart() { // Stop: killing the worker is the only way to interrupt running Python (it restarts; the files are in the HTTP cache)
@@ -431,7 +450,7 @@ $('#map').onclick = e => {
   const n = e.target.closest('.node');
   if (n) gotoLine(+n.dataset.line);
 };
-$('#fold-all').onclick = () => { const g = S.graph[S.active]; if (g) { S.fold[S.active] = g.nodes.filter(n => n.kids.length).map(NodeMap.foldKey); draw(); } };
+$('#fold-all').onclick = () => { const g = S.graph[S.active]; if (g) { S.fold[S.active] = [...(S.fold[S.active] || []).filter(k => k.startsWith('v:')), ...g.nodes.filter(n => n.kids.length).map(NodeMap.foldKey)]; draw(); } }; // (keeps collapsed value boxes)
 $('#unfold-all').onclick = () => { S.fold[S.active] = []; draw(); };
 let qi = 0;
 $('#q').oninput = () => { qi = 0; paint(); };
@@ -511,6 +530,8 @@ async function run(mode = 'run') { // mode = 'run', or the id of a mode a librar
   S.tl = null; S.step = null; S.error = null;
   showMarks(); updateStepper(); draw();
   PyLibs.closeViews();
+  const sw = navigator.serviceWorker?.controller;
+  if (sw) PyLibs.views().forEach(l => sw.postMessage({ lib: l.name, clear: true })); // nothing left over from the last run
   job = { files: { ...S.files }, main: S.active, mode, answers: [], seed: Math.floor(Math.random() * 2 ** 31) };
   S.ranFiles = { ...S.files };
   $('#out').textContent = '';
@@ -525,11 +546,14 @@ async function attempt() { // one execution of the job; asks for more input and 
   await new Promise(r => setTimeout(r, 30)); // let the browser paint first
   const t0 = performance.now(), j = job;
   let res = null;
+  pyBusy = true;
   try {
-    res = JSON.parse(await W.call('run', { files: j.files, main: j.main, mode: j.mode, answers: j.answers, seed: j.seed }));
+    res = JSON.parse(await W.call('run', { files: j.files, main: j.main, mode: j.mode, answers: j.answers, seed: j.seed, mailbox: mailboxUrl() }));
   } catch (e) {
     if (e === STOPPED) return;
     out(String(e.message || e) + '\n', 'err');
+  } finally {
+    pyBusy = false;
   }
   if (job !== j) return;
   if (res?.need_input) {
@@ -584,7 +608,13 @@ function liveTrace(files) {
   clearTimeout(liveT);
   liveT = setTimeout(() => { if (S.step == null) draw(); }, 120);
 }
-PyLibs.views().forEach(l => l.view.setSend(ev => W.w.postMessage({ type: 'guievent', lib: l.name, ev })));
+// A window event made while a run is executing goes into the mailbox (the program reads it at its next update()); at any other
+// time it goes straight to the worker, which handles it between runs.
+PyLibs.views().forEach(l => l.view.setSend(ev => {
+  const sw = pyBusy && navigator.serviceWorker?.controller;
+  if (sw) sw.postMessage({ lib: l.name, ev });
+  else W.w.postMessage({ type: 'guievent', lib: l.name, ev });
+}));
 
 // ---- import / export / share
 const download = (blob, name) => {

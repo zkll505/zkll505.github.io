@@ -144,6 +144,19 @@ A dict of functions that lets the runner drive your window's life.
 Callbacks that run inside `dispatch`/`tick` are traced, so the node map's values update as the user clicks. Catch exceptions
 from student callbacks and print them to `sys.stderr` (as tkinter does) so one bad handler doesn't kill the window.
 
+### Events while the script is busy
+
+A program stuck in `while True:` can't receive messages, so the page leaves its window events in a mailbox. `runner.py` puts two
+functions in your `lib.py`'s namespace (their leading underscore keeps them out of the module you build):
+
+| Function | Use |
+| --- | --- |
+| `_mailbox()` | The events (a list of dicts, whatever your view passed to `send`) that arrived since the last call. One synchronous request, so call it at most about 30 times a second; tkinter does it from `update()` and backs off when it is slow. |
+| `_heartbeat()` | Call it when your library shows the program is alive (a frame was drawn). It restarts the infinite-loop count, so an animation isn't cut off after 1.5 million lines. |
+
+Pass what `_mailbox()` returns to your own `dispatch`, as `tkinter`'s `_poll()` does. If your windows can be closed, make your update
+call fail once the window is gone (tkinter raises `TclError`), or a loop would run on against a window that no longer exists.
+
 ### The view (JavaScript)
 
 ```js

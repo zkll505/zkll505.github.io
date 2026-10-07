@@ -27,6 +27,10 @@ Data shapes (plain JSON, handed to nodemap.js / app.js unchanged):
         facts = [[step, file index, "v"|"p"|"r", line, data], ...], values that became known right before step number `step`
         (v = variable values after a line, p = parameters at a call, r = a return value). NodeMap.viewAt() replays them.
 
+Events while a program runs: a busy worker can't receive messages, so the page puts window events (key presses, clicks, the
+close button) in a service worker's mailbox and the running program reads them with a synchronous request, mailbox(). A library
+polls it from its update(); see sw.js and docs/ARCHITECTURE.md. gui_pump() hands over whatever is left when the program ends.
+
 How tracing works: a "line" event fires BEFORE the line runs, so what a statement produced is snapshotted at the next line
 event of the same frame (or at its "return"). That is why `last` remembers the previous line of each frame.
 Safety limits (constants below): LIMIT traced lines (assumed infinite loop), MAXSTEPS / MAXFACTS timeline entries, OUTLIM output.
@@ -391,6 +395,28 @@ def snap(frame, names, store, key):
 _LIVE = {}
 
 
+_MAIL = {"url": "", "ok": True}  # where the service worker's mailbox is ("" = none), and whether it has answered so far
+_BEAT = [lambda: None]  # heartbeat(): set by run() to reset the traced-line counter (see load_lib)
+
+
+def mailbox(lib):
+    """The events the page left in the mailbox for library `lib` while the program was running: a list of dicts (what the view
+    passed to send()). [] when there is no mailbox. One synchronous request, so it costs a moment: call it at most a few dozen
+    times a second."""
+    if js is None or not _MAIL["url"] or not _MAIL["ok"]:
+        return []
+    try:
+        x = js.XMLHttpRequest.new()
+        x.open("GET", f"{_MAIL['url']}?lib={lib}", False)
+        x.send()
+        if x.status == 200:
+            return json.loads(x.responseText)
+    except Exception:
+        pass
+    _MAIL["ok"] = False  # nothing answered (this worker isn't controlled by the service worker): stop asking, each try is a network round trip
+    return []
+
+
 def configure(allowed_json):
     """Set the import allow-list: the names of the registered libraries (PyLibs.names() in the page)."""
     global ALLOWED
@@ -400,7 +426,9 @@ def configure(allowed_json):
 def load_lib(name, src):
     """Run a library's lib.py once, at start-up (docs/ADDING_A_LIBRARY.md). Picks up the names it may define: install(),
     run_modes (-> MODES) and gui_hooks (-> GUI). Its frames are hidden from students' tracebacks (the "<lib name>" filename)."""
-    ns = {"__name__": name + "_lib"}
+    # _mailbox() and _heartbeat() are handed to every library (docs/ADDING_A_LIBRARY.md): events that arrived while the program was
+    # busy, and "I am still making progress" (an animation that keeps updating its window is not an infinite loop)
+    ns = {"__name__": name + "_lib", "_mailbox": lambda: mailbox(name), "_heartbeat": lambda: _BEAT[0]()}
     exec(compile(src, f"<lib {name}>", "exec"), ns)
     if "install" in ns:
         ns["install"]()  # e.g. register fake modules in sys.modules
@@ -421,9 +449,10 @@ def gui_cleanup():
         _LIVE.clear()
 
 
-def run(files_json, main, mode="run", answers_json="[]", seed=0):
+def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url=""):
     """Run 'main' with line tracing: as __main__, or (for a mode added by a library, e.g. doctest) as a module handed to that mode."""
     files, answers = json.loads(files_json), json.loads(answers_json)
+    _MAIL.update(url=mailbox_url, ok=True)
     random.seed(seed)  # same seed on every re-run, so replaying input() answers repeats the same random numbers
     for g in GUI.values():
         g["reset"]()  # closes any window left by the previous run
@@ -433,6 +462,7 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0):
     names = list(files)
     fid = {n: i for i, n in enumerate(names)}
     info, T, step = {}, {}, [0]
+    _BEAT[0] = lambda: step.__setitem__(0, 0)  # a library calls this when the program shows it is alive: restart the infinite-loop count
     # timeline: steps = [file index, line, ...], facts as described in the module docstring; over[0] = the step cap was hit;
     # cur = (file, line) being executed (to place an error at the right spot); outn / outover count the output against OUTLIM
     steps, facts, over, cur, outn, outover = [], [], [False], [None, 0], [0], [False]  # timeline: steps = [file, line, ...]
@@ -651,7 +681,11 @@ def gui_tick(lib):
 
 
 def gui_pump(lib):
-    """Ask a library for its current frame and next timer without running anything (used right after run())."""
+    """Ask a library for its current frame and next timer (used right after run()). Events that were still waiting in the mailbox
+    when the program ended are handled first."""
+    events = mailbox(lib)
+    if events:
+        return gui_call(lib, lambda: [GUI[lib]["dispatch"](e) for e in events])
     return gui_reply(lib)
 
 

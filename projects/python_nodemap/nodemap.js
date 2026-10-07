@@ -1,5 +1,5 @@
 /* Node map: lays the analysis out as one vertical stack (same order as the source lines) and draws it as SVG.
-   Wires never cross a card: they leave the right edge, run down a gutter lane, cross the gap above the target
+   Wires never cross a box: they leave the right edge, run down a gutter lane, cross the gap above the target
    and enter its left edge. The same SVG string is rasterised for the PNG export.
 
    Public API
@@ -8,12 +8,13 @@
      NodeMap.png(graph, trace, opts)   -> Promise<Blob>    the same picture as a PNG
      NodeMap.viewAt(timeline, n)       -> { file: trace }  the values and counts as they stood after n recorded steps
      NodeMap.nodeAt(graph, line)       -> the innermost node covering a 1-based source line
-     NodeMap.foldKey(node)             -> the key used in opts.fold to collapse a container
+     NodeMap.foldKey(node)             -> the key used in opts.fold to collapse a container ('v:' + that key collapses the
+                                                           node's value box instead)
    build() only returns a string. app.js puts it in #map and afterwards toggles CSS classes on it (hover, search, current step)
    without redrawing. */
 const NodeMap = (() => {
-  // Geometry in SVG pixels: HEAD = height of a card's header (kind label + code line), ROW = one line of the value box,
-  // MINW = narrowest card, IND = indent of a nested card, SLOT = vertical room per incoming wire label above a card,
+  // Geometry in SVG pixels: HEAD = height of a box's header (kind label + code line), ROW = one line of the value box,
+  // MINW = narrowest box, IND = indent of a nested box, SLOT = vertical room per incoming wire label above a box,
   // LANE = distance between parallel wires in the gutters.
   const HEAD = 36, ROW = 16, MINW = 320, IND = 16, SLOT = 18, LANE = 14; // SLOT = row per incoming wire label, LANE = gap between parallel wires
   const COLOR_DARK = { def: '#7aa2f7', class: '#bb9af7', for: '#ff9e64', while: '#ff9e64', if: '#e0af68', else: '#e0af68', with: '#e0af68',
@@ -46,6 +47,8 @@ const NodeMap = (() => {
   const hue = (s, light) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return light ? `hsl(${h},68%,38%)` : `hsl(${h},75%,66%)`; };
   // identifies a container in the set of collapsed ones; survives edits elsewhere in the file (it is the kind and first line)
   const foldKey = n => n.kind + ':' + n.line;
+  // a little chevron triangle centred on (cx, cy): pointing down when open, right when collapsed
+  const tri = (cx, cy, open) => (open ? `M${cx - 4},${cy - 2}L${cx + 4},${cy - 2}L${cx},${cy + 3}Z` : `M${cx - 3},${cy - 4}L${cx + 3},${cy}L${cx - 3},${cy + 4}Z`);
 
   function lanes(items) { // interval colouring: wires whose vertical spans don't overlap share a lane
     const ends = [];
@@ -93,28 +96,32 @@ const NodeMap = (() => {
     });
     const shown = N.filter(n => rep[n.id] === n.id);
 
-    // incoming wires per node; each gets a "slot", one row of label space in the gap above its target card
+    // incoming wires per node; each gets a "slot", one row of label space in the gap above its target box
     const inc = N.map(() => []);
     wl.forEach(w => { w.slot = inc[w.to].length; inc[w.to].push(w); });
     const gap = n => (inc[n.id].length ? 25 + SLOT * (inc[n.id].length - 1) : 14); // room above a node for its incoming wire labels
 
-    // the value box of a node: [name, value] pairs from the trace ('–' before the first run), at most 5 rows (then '+n more')
-    const rows = n => {
+    // the value box of a node: every [name, value] pair from the trace ('–' before the first run), however many there are
+    const allRows = n => {
       const v = (n.kind === 'def' ? tr?.params : tr?.vals)?.[n.line] || {};
       let r = n.show.map(k => [k, v[k] ?? '–']);
       if (n.kind === 'def' && tr?.rets?.[n.line]) r.push(['return', tr.rets[n.line]]);
       if (n.kind === 'return') r = tr ? [['value', tr.rets?.[n.line] ?? '–']] : [];
-      return r.length > 5 ? [...r.slice(0, 4), [`+${r.length - 4} more`, '']] : r;
+      return r;
     };
+    // A value box with CHEV or more rows has a chevron that collapses it to one line (just the names, and how many there are).
+    // Its fold key is 'v:' + the node's foldKey, kept in the same set as the collapsed containers.
+    const CHEV = 3, vkey = n => 'v:' + foldKey(n);
     // how often a node ran (for a function: how often it was called); null before any run. Never-run nodes are drawn dim.
     const count = n => (tr ? (n.kind === 'def' ? tr.calls?.[n.line] : tr.hits?.[n.line]) || 0 : null);
 
-    // width a node needs: nested cards are inset on both sides, so a container is wider than its widest child
+    // width a node needs: nested boxes are inset on both sides, so a container is wider than its widest child
     const need = n => (n.minw = Math.max(MINW, ...n.vis.map(k => need(N[k]) + 2 * IND)));
     const W0 = Math.max(...roots.map(need));
     // layout, top-down: sets x, y, w, h on every visible node and returns the y just below it and its children
     const place = (n, x, w, y) => {
-      Object.assign(n, { x, y, w, rows: rows(n) });
+      const all = allRows(n), vfold = all.length >= CHEV && !!o.fold?.has(vkey(n));
+      Object.assign(n, { x, y, w, vcount: all.length, vfold, rows: vfold ? [[all.map(r => r[0]).join(', '), null]] : all });
       let b = y + HEAD + (n.rows.length ? n.rows.length * ROW + 16 : 0);
       n.vis.forEach(k => { b = place(N[k], x + IND, w - 2 * IND, b + gap(N[k])); });
       if (n.vis.length) b += 12;
@@ -135,25 +142,33 @@ const NodeMap = (() => {
     const gl = 24 + lanes(ws.map(o => o.L)) * LANE, gr = 24 + lanes(ws.map(o => o.R)) * LANE;
     const WID = gl + W0 + gr;
 
-    // the innermost visible card around a source line: where the "now" (stepping) and error highlights go
+    // the innermost visible box around a source line: where the "now" (stepping) and error highlights go
     const inner = line => shown.filter(n => n.line <= line && line <= n.end).sort((a, b) => (a.end - a.line) - (b.end - b.line))[0]?.id;
     const nowId = o.now ? inner(o.now) : null, errId = o.err ? inner(o.err) : null;
 
-    // drawing: the cards first, then the wires on top, then the little connection ports on each card's edges
+    // drawing: the boxes first, then the wires on top, then the little connection ports on each box's edges
     const nodes = shown.map(n => {
       const x = gl + n.x, c = COLOR[n.kind] || COLOR.other, cnt = count(n), box = n.kids.length > 0;
       const dim = tr && cnt === 0 && n.kind !== 'else' && n.kind !== 'try';
       const lab = (n.kind === 'if' && n.text.startsWith('elif') ? 'ELIF' : LABEL[n.kind]) + (folded(n) ? `  ·  ${n.kids.length} inside` : '');
       const sh = n.kind === 'for' || n.kind === 'while' ? cnt - 1 : n.kind === 'class' ? 0 : cnt; // loop header runs once more than the body
       const right = (sh > 1 ? `×${sh}  ` : '') + 'L' + n.line;
-      const vals = n.rows.map(([k, v], i) => `<text class="vt" x="${x + 16}" y="${n.y + HEAD + ROW * (i + 1)}"><tspan class="vn">${esc(k)}</tspan><tspan class="eq"> = </tspan><tspan class="vv">${esc(clip(v, Math.floor((n.w - 40) / 6.2) - k.length - 3))}</tspan></text>`).join('');
+      const chevV = n.vcount >= CHEV, room = Math.floor((n.w - 40 - (chevV ? 16 : 0)) / 6.2); // characters that fit in a value row (the chevron takes some)
+      const vals = n.rows.map(([k, v], i) => {
+        const at = `<text class="vt" x="${x + 16}" y="${n.y + HEAD + ROW * (i + 1)}">`;
+        return v === null // collapsed: one line with the names and the count
+          ? `${at}<tspan class="vn">${esc(clip(k, room - 6))}</tspan><tspan class="eq"> (${n.vcount})</tspan></text>`
+          : `${at}<tspan class="vn">${esc(k)}</tspan><tspan class="eq"> = </tspan><tspan class="vv">${esc(clip(v, room - k.length - 3))}</tspan></text>`;
+      }).join('');
+      const vcx = x + n.w - 22, vcy = n.y + HEAD + 10;
+      const vchev = chevV ? `<g class="fold" data-fold="${vkey(n)}"><title>${n.vfold ? `Show all ${n.vcount} values` : 'Collapse these values'}</title><rect x="${vcx - 9}" y="${vcy - 9}" width="18" height="18" fill="transparent"/><path d="${tri(vcx, vcy, !n.vfold)}"/></g>` : '';
       const cx = x + n.w - 18, cy = n.y + 11;
-      const chev = box ? `<g class="fold" data-fold="${foldKey(n)}"><rect x="${cx - 9}" y="${cy - 9}" width="18" height="18" fill="transparent"/><path d="${folded(n) ? `M${cx - 3},${cy - 4}L${cx + 3},${cy}L${cx - 3},${cy + 4}Z` : `M${cx - 4},${cy - 2}L${cx + 4},${cy - 2}L${cx},${cy + 3}Z`}"/></g>` : '';
+      const chev = box ? `<g class="fold" data-fold="${foldKey(n)}"><rect x="${cx - 9}" y="${cy - 9}" width="18" height="18" fill="transparent"/><path d="${tri(cx, cy, !folded(n))}"/></g>` : '';
       return `<g class="node${dim ? ' dim' : ''}${n.id === nowId ? ' now' : ''}${n.id === errId ? ' err' : ''}" data-id="${n.id}" data-line="${n.line}"><title>line ${n.line}</title>
 <rect class="box${box ? '' : ' leaf'}" x="${x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="7"${box ? ` fill="${c}" fill-opacity=".07"` : ''} stroke="${c}" stroke-opacity=".7"/>
 <text class="k" x="${x + 14}" y="${n.y + 15}" fill="${c}">${lab}</text><text class="ln" x="${x + n.w - (box ? 32 : 14)}" y="${n.y + 15}" text-anchor="end">${right}</text>${chev}
 <text class="code" x="${x + 14}" y="${n.y + 31}">${esc(clip(n.text, Math.floor((n.w - 28) / 6.6)))}</text>
-${n.rows.length ? `<rect x="${x + 10}" y="${n.y + HEAD}" width="${n.w - 20}" height="${n.rows.length * ROW + 8}" rx="4" class="vbox"/>${vals}` : ''}</g>`;
+${n.rows.length ? `<rect x="${x + 10}" y="${n.y + HEAD}" width="${n.w - 20}" height="${n.rows.length * ROW + 8}" rx="4" class="vbox"/>${vals}${vchev}` : ''}</g>`;
     }).join('');
 
     const wires = ws.map(({ w, a, b, yo, yi, yg, R, L }) => {

@@ -32,6 +32,7 @@ seconds; the downloaded files are cached).
 | `libs.js` | `PyLibs`: the registry every library registers with. |
 | `complete.js` | Autocomplete; its data comes from the registry. |
 | `worker.js` | One function, `workerMain`, whose source text becomes a Blob worker (so it can't use outside variables). |
+| `sw.js` | A service worker that is only a mailbox: window events made while a program is running wait here until it reads them (see *Events while a program is running*). |
 | `runner.py` | The Python backend (see below). Knows nothing about specific libraries. |
 | `libs/<name>/` | `lib.js` manifest (+ view for GUI libraries) and optional `lib.py`. |
 | `tests/test_backend.py` | Backend tests ([tests/README.md](../tests/README.md)). |
@@ -41,7 +42,9 @@ seconds; the downloaded files are cached).
 
 1. `index.html` loads `libs.js`, then each `libs/<name>/lib.js` (registration order = load order), then `worker.js`,
    `nodemap.js`, `complete.js`, `app.js`.
-2. `app.js` fetches `runner.py` and every library's `lib.py` (as text) and starts the worker with an `init` message.
+2. `app.js` registers `sw.js` and waits until it controls the page (first visit only, at most 2.5 s; skipped if there are no service
+   workers), because the worker has to be created afterwards to inherit that control. Then it fetches `runner.py` and every library's
+   `lib.py` (as text) and starts the worker with an `init` message.
 3. The worker downloads Pyodide's four big files itself (so the page can show a real progress bar), calls `loadPyodide`, runs
    `runner.py` in a namespace named `nm_runner`, calls `configure(names)` (the import allow-list) and `load_lib(name, src)`
    for each library in order.
@@ -59,7 +62,7 @@ are pushed by the worker whenever it likes.
 | --- | --- | --- |
 | page → worker | `init {url, runner, libs, allowed, sizes}` | Download and start Pyodide, run `runner.py`, `configure()`, `load_lib()` each library. |
 | page → worker | `analyze {src, mods}` | Static analysis of one file. Reply `{id, result}` with the JSON string. |
-| page → worker | `run {files, main, mode, answers, seed}` | Run a program. Reply `{id, result}` with the JSON string. |
+| page → worker | `run {files, main, mode, answers, seed, mailbox}` | Run a program (`mailbox` is the URL of the service worker's mailbox, or `''`). Reply `{id, result}` with the JSON string. |
 | page → worker | `guievent {lib, ev}` | The user did something in a library's window (no reply of its own; frames come back as `gui`). |
 | page → worker | `guireset` | The project was replaced: stop the windows and their timers. |
 | worker → page | `{id, result}` or `{id, error}` | The reply to a request. |
@@ -111,7 +114,7 @@ it to that library's function instead of running it as `__main__`.
 
 ## The node map
 
-`NodeMap.build` lays nodes out in one vertical column in source order; containers nest. Wires never cross a card: each leaves
+`NodeMap.build` lays nodes out in one vertical column in source order; containers nest. Wires never cross a box: each leaves
 the source's right edge, runs down a gutter *lane*, crosses the gap above its target (where its label sits) and enters the
 target's left edge. Lanes are assigned by interval colouring so non-overlapping wires share one. All colours are CSS variables
 on the `<svg>` (two palettes: dark/light), so the same markup serves the screen and the PNG export, which rasterises the SVG
@@ -142,6 +145,32 @@ boxes. Widget DOM elements are reused between updates, and `Entry`/`Text` values
 bitmap inside resized to match through a `ResizeObserver`. Drawing and mouse coordinates are therefore 1:1; stretching the bitmap
 with CSS instead made clicks land away from the pointer.
 
+## Events while a program is running
+
+A busy Python worker cannot receive messages: its event loop is stuck inside the program. So a key press during `while True:
+turtle.update(); sleep(0.02)` (the usual animation or game loop) used to wait until the loop ended, which was never. The usual cure,
+`SharedArrayBuffer`, needs server headers GitHub Pages cannot send. This is the substitute:
+
+1. While a run is executing (`pyBusy` in `app.js`), the view's `send()` does not message the worker. It posts `{lib, ev}` to the
+   **service worker** (`sw.js`), which just keeps a list per library.
+2. The program reads that list with a **synchronous request**: `runner.mailbox(lib)` does a sync `XMLHttpRequest` to
+   `<folder>/__mailbox?lib=<name>`, which the service worker answers (and empties). Synchronous requests are allowed in workers.
+3. A library calls it from its own update point. tkinter's `update()` does `_poll()`, which dispatches the events exactly as if the
+   worker had received them, so callbacks (turtle's `onkey` ...) run in the middle of the user's loop, traced like any other code. The
+   poll rate adapts to how slow the request was (about 0.6 ms in Chrome, 3 to 20 ms in Firefox), capped at roughly a tenth of the time.
+4. When the run ends, `gui_pump()` hands over anything still waiting; from then on events go straight to the worker as before.
+
+The worker is created *after* the service worker controls the page, because a worker inherits its creator's control (a Blob worker
+included); that is why start-up waits for it on the first visit. If anything is missing (no service worker, a hard reload, a mailbox
+that doesn't answer) the first failed read switches polling off for that run and the program behaves exactly as before: events are
+handled after it finishes.
+
+Two related rules live in the same place. `update()` on a destroyed window raises `TclError` (and turtle turns that into
+`Terminator`), so closing the window during a loop ends the program as in the real modules; and `update()` calls `_heartbeat()`,
+which resets the traced-line counter, because an animation that keeps drawing is not the infinite loop that `LIMIT` is there to catch
+(Stop still works). Libraries get `_mailbox()` and `_heartbeat()` in their namespace (see the library guide). `input()` still uses the
+re-run trick; the mailbox could carry its answers too, but a blocking `input()` needs a wait, which a synchronous poll can't do cheaply.
+
 ## Limits at a glance
 
 | Limit | Where | Why |
@@ -164,6 +193,8 @@ base64url-encoded; it lives in the URL fragment, so it is never sent to a server
 - `Element.scrollIntoView()` does nothing for SVG elements in Firefox, so the map scrolls itself (`reveal()` in `app.js`), and
   redraws restore the scroll position explicitly.
 - Moving a focused element in the DOM drops its focus; `TkView.apply` restores focus and caret after re-layout.
+- Synchronous `XMLHttpRequest` from a worker to the service worker costs about 0.6 ms in Chrome but 3 to 20 ms in Firefox, which is why
+  the mailbox poll rate adapts instead of being fixed.
 - A tree can arrive after the page already closed the windows (messages in flight); the worker sends `tree: null` after a
   reset and at the start of each run so the last message always wins.
 - Module state lives for the whole session, not per run (a library's `lib.py` runs once). Anything a library keeps between

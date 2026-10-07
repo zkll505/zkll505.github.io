@@ -31,11 +31,11 @@ SPEEDS = {"fastest": 0, "fast": 10, "normal": 6, "slow": 3, "slowest": 1}
 
 
 class TurtleGraphicsError(Exception):  # e.g. an unknown shape name, as in the real module
-    pass
+    __module__ = "turtle"  # so a traceback reads turtle.TurtleGraphicsError, not turtle_lib.TurtleGraphicsError
 
 
-class Terminator(Exception):  # the real module raises this when its window is closed; kept so `except turtle.Terminator` works
-    pass
+class Terminator(Exception):  # raised when the window was closed while the program was still drawing (the real module does too)
+    __module__ = "turtle"
 
 
 class Vec2D(tuple):
@@ -83,12 +83,14 @@ def _color(args, mode):
 # ponytail: a drawing is a list of Canvas items and the whole list is re-sent on every flush; fine for thousands of
 # segments, switch to incremental updates in libs/tkinter if huge drawings lag.
 class _Screen:
-    """The one window every turtle draws on. bye() (also the window's x button) forgets it, so the next Turtle() builds a new one."""
+    """The one window every turtle draws on. When it is closed (bye(), or the window's x button) while the program is still running, the
+    next turtle call raises Terminator, as in the real module; a window left over from an earlier run is simply replaced."""
 
     _inst = None
 
     def __init__(self):
         self._root = tk.Tk()
+        self._gen = tk._run()  # which run opened this window (see Screen())
         self._root.title("Python Turtle Graphics")
         self._w, self._h = 720, 540
         self._cv = tk.Canvas(self._root, width=self._w, height=self._h, bg="white", highlightthickness=0)
@@ -134,8 +136,14 @@ class _Screen:
         if delay is not None:
             self._delayv = delay
 
+    def _refresh(self):  # draw what is pending; if the window has been closed, end the program as the real turtle does
+        try:
+            self._cv.update()
+        except tk.TclError:
+            raise Terminator
+
     def update(self):
-        self._cv.update()
+        self._refresh()
 
     def delay(self, delay=None):
         if delay is None:
@@ -182,8 +190,7 @@ class _Screen:
         self.onclick(lambda x, y: self.bye())
         self.mainloop()
 
-    def bye(self):
-        _Screen._inst = None
+    def bye(self):  # (the next Screen() call notices the closed window)
         self._root.destroy()
 
     def clearscreen(self):
@@ -214,8 +221,14 @@ class _Screen:
 
 
 def Screen():
-    """The shared window. Created on first use, and created again if the old one was closed (x button, bye(), or a new run)."""
-    if _Screen._inst is None or not _Screen._inst._root.winfo_exists():
+    """The shared window, created on first use. If it was closed during this run (x button, bye()) the program is told so with
+    Terminator, once, as the real turtle does; the call after that opens a new window. One left over from an earlier run is just replaced."""
+    inst = _Screen._inst
+    if inst is not None and not inst._root.winfo_exists():
+        _Screen._inst = None
+        if inst._gen == tk._run():
+            raise Terminator
+    if _Screen._inst is None:
         _Screen._inst = _Screen()
     return _Screen._inst
 
@@ -277,7 +290,7 @@ class Turtle:
             return
         scr._count += 1
         if scr._count % scr._tracing == 0:
-            scr._cv.update()
+            scr._refresh()
             if self._speed:
                 time.sleep(scr._delayv / 1000)
 
@@ -335,6 +348,22 @@ class Turtle:
         if y is None:
             x, y = x
         self._goto(x, y)
+
+    def teleport(self, x=None, y=None, *, fill_gap=False):
+        """Jump to (x, y) with no line and no animation, whatever the pen is doing (new in Python 3.12). Leaving a coordinate out
+        keeps the current one. While filling, the jump leaves a gap in the fill unless fill_gap is True."""
+        x = self._pos[0] if x is None else x
+        y = self._pos[1] if y is None else y
+        self._pos = Vec2D(float(x), float(y))
+        if self._fillitem is not None and fill_gap:
+            self._fillpts.append(self._pos)
+            self.screen._cv.coords(self._fillitem, *[v for p in self._fillpts for v in self.screen._pt(*p)])
+        self._draw_turtle()
+        scr = self.screen
+        if scr._tracing > 0:  # show it, but never wait: a teleport has no animation
+            scr._count += 1
+            if scr._count % scr._tracing == 0:
+                scr._refresh()
 
     def setx(self, x):
         self._goto(x, self._pos[1])
@@ -569,7 +598,7 @@ def _forward_to(owner, name):
     return f
 
 
-for _n in ("forward fd back bk backward right rt left lt goto setpos setposition setx sety setheading seth home circle dot stamp clearstamp "
+for _n in ("forward fd back bk backward right rt left lt goto setpos setposition teleport setx sety setheading seth home circle dot stamp clearstamp "
            "clearstamps speed position pos towards xcor ycor heading distance degrees radians pendown pd down penup pu up pensize width pen "
            "isdown color pencolor fillcolor filling begin_fill end_fill reset clear write showturtle st hideturtle ht isvisible shape shapesize "
            "turtlesize getscreen").split():

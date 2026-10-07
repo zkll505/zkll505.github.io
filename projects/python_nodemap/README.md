@@ -1,8 +1,8 @@
 # Python Nodemap
 
 A Python IDE that runs entirely in your browser, built for teaching. You write Python on the left; on the right a
-**node map** shows your program as connected nodes: one card per statement, wires for the data flowing between them, and a
-box on every node showing the current values of the variables it defines. Run the program, then scrub through it
+**node map** shows your program as connected nodes: one box per statement, wires for the data flowing between them, and a
+value box in every one showing the current values of the variables it defines. Run the program, then scrub through it
 step by step.
 
 No server, no install, no account: Python runs in the browser ([Pyodide](https://pyodide.org)) and projects are stored in
@@ -29,7 +29,7 @@ your browser's `localStorage`.
   allow-list.
 - **`input()`** works (the page asks for the answer in the console).
 - **Projects**: export a zip of every `.py` plus a PNG of each map, import a zip, or share the whole project as a link.
-- **Libraries** (each one is a plug-in, see below): `random`, `math`, `time`, `enum`, `doctest`, `unittest`,
+- **Libraries** (each one is a plug-in, see below): `random`, `math`, `time`, `enum`, `pathlib`, `doctest`, `unittest`,
   `tkinter` (GUI windows) and `turtle`.
 
 ## Run it
@@ -59,7 +59,8 @@ so right after deploying a hard refresh (Ctrl+F5) shows the new version.
 1. Write code in the editor. The node map updates a moment after you stop typing.
 2. Press **▶ Run** (or Ctrl+Enter). Output goes to the console; values and run counts appear on the map.
 3. Use the step bar above the map to replay the run: ⏮ start, |◀ back, ▶ play/pause, ▶| forward, ⏭ end, or drag the slider.
-4. Click a card to jump to its line; click the chevron on a container (function, loop, `if` ...) to fold it.
+4. Click a box to jump to its line; click the chevron on a container (function, loop, `if` ...) to fold it, or the one on a value
+   box to collapse its list of values.
 
 Other things worth knowing:
 
@@ -87,22 +88,13 @@ Other things worth knowing:
 
 ## Reading the node map
 
-- **Cards** are statements, in source order. The word in the corner says what it is (FUNCTION, CLASS, LOOP, IF / ELIF / ELSE,
-  TRY / CATCH, RETURN, IMPORT, SET, RUN, WITH), and the colour follows the kind. Containers hold the cards of their body.
-  Top right: the source line (`L12`) and, after a run, how many times it executed (`×5`). A card that never ran is dimmed.
-- **Value box** under a card: the variables that statement defines and their value right after it ran (`–` before it ran). A
-  function's box shows its parameters and its return value.
-- **Wires** go from where a value comes from to where it is used, and never cross a card.
-  - A solid wire is **data**: the label is the variable name, and the same variable always has the same colour.
-  - A dashed orange wire is a **call**: it points at the function (or class `__init__`) being called, and has an extra arrow
-    back (`↔`) when the function returns a value.
-  - A dotted wire marked `↻` is a **loop-carried** value: used on one pass, produced on the previous one.
-- Hover or put the cursor in a card to light up its wires; the **data / calls / loops / selected** buttons filter them. The
-  search box highlights every card and wire that mentions a name.
-- **Hints** (yellow or red squiggles and a dot in the gutter) come from the same analysis; hover them for the explanation.
+Every statement is a **box**, in source order; a box inside a box is part of its body. The dark **value box** inside a box lists the
+variables that statement defines and their values: **every** one is shown (a function with six parameters shows all six and its
+`return`), and a value box with three or more rows has a **▾** that collapses it to a single line. **Wires** go from where a value
+comes from to where it is used: solid for data, dashed orange for calls (with **↔** when the function returns a value), dotted
+with **↻** for values carried round a loop. After a run each box shows how often it ran (`×5`) and a box that never ran is dimmed.
 
-The map is built by reading your code, not by watching it run, so it is approximate in places: if both branches of an `if`
-assign a name, only the later one is wired to a later use. That is deliberate (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
+The full explanation of every part, with the function and class view, is in **[docs/NODE_MAP.md](docs/NODE_MAP.md)**.
 
 ## Libraries
 
@@ -110,7 +102,7 @@ Only these can be imported (plus the project's own files); anything else raises 
 
 | Library                          | What you get                                                                                                                                                                                                                                |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `random`, `math`, `time`, `enum` | The standard modules (autocomplete included).                                                                                                                                                                                               |
+| `random`, `math`, `time`, `enum`, `pathlib` | The standard modules (autocomplete included). `pathlib` and `open()` work on a temporary folder that is deleted when the run ends.                                                                                                                                                                                               |
 | `doctest`                        | The module, plus a **Doctest** button that runs the active file's `>>>` examples.                                                                                                                                                           |
 | `unittest`                       | The module, plus a **Tests** button; the report is shown in the console in normal colour.                                                                                                                                                   |
 | `tkinter`                        | A look-alike of real tkinter drawn as floating windows: the common widgets, `pack`/`grid`/`place`, variables, `bind`, `after`, `Canvas`, menus, `messagebox`, `ttk` basics. See its limits in [`libs/tkinter/lib.py`](libs/tkinter/lib.py). |
@@ -131,7 +123,12 @@ Each library, what it supports and what it doesn't: [libs/README.md](libs/README
 - A GUI window stays open after the script ends, like in IDLE or Thonny; it closes with its ✕ or the next **Run**. Code after
   `mainloop()` / `turtle.done()` never runs.
 - Dialogs (`messagebox.askyesno`, `simpledialog.askstring`) can't wait for a click, so they answer immediately and say so.
-- Programs run in the browser's single-threaded Python: no threads, files, network or third-party packages.
+- **Keys and clicks reach a running program** through a service worker (`sw.js`), so a loop that keeps calling `update()`, like an
+  animation or a game, can be steered from the keyboard. Where the browser has no service worker (Firefox private windows, plain
+  `http` that isn't `localhost`) the program only sees them once it finishes. A program that keeps updating its window is also not
+  counted towards the infinite-loop cutoff, and closing the window mid-run ends the program (`TclError`, or `turtle.Terminator`).
+- Programs run in the browser's single-threaded Python: no threads, network or third-party packages, and files only in a temporary
+  folder that is deleted when the run ends.
 - Safety caps: a run stops after 1.5 million executed lines (assumed to be an infinite loop) or 400,000 characters of output;
   the step slider records the first 30,000 steps. A share link carries at most 50 files of under 500,000 characters each.
 
@@ -146,6 +143,7 @@ Each library, what it supports and what it doesn't: [libs/README.md](libs/README
 | `ImportError: 'x' isn't available here` | Only the libraries listed above can be imported. The message lists what you can use. |
 | Python restarts after **Stop** | That is how a running program is interrupted. It takes a couple of seconds. |
 | A window won't go away | Close it with its ✕ or press **Run** (a new run closes the old windows). |
+| Keys or clicks do nothing in a running animation | They travel through the service worker (`sw.js`), which needs https or `localhost` and isn't available in Firefox private windows. The loop must also call `update()` (`turtle.update()`, `screen.update()`, `root.update()`) so the program can see them. Ctrl+F5 skips the service worker for that visit; reload normally. |
 
 ## Privacy
 
@@ -164,10 +162,11 @@ index.html  style.css
 app.js          the IDE: files, editor, console, run/stop, stepping, import/export/share
 nodemap.js      layout + SVG drawing of the node map (also used for the PNG export)
 complete.js     autocomplete          worker.js   Pyodide in a Web Worker
+sw.js           service worker: a mailbox that delivers key and mouse events to a running program
 libs.js         the library registry  runner.py   analysis + traced execution (Python)
 libs/<name>/    one folder per library: lib.js (manifest) and lib.py (optional)
 tests/          python tests/test_backend.py
-docs/           ARCHITECTURE.md, ADDING_A_LIBRARY.md, examples/clicker (a complete tiny GUI library)
+docs/           NODE_MAP.md (what each part of the map means), ARCHITECTURE.md, ADDING_A_LIBRARY.md, examples/clicker
 ```
 
 ## Tests

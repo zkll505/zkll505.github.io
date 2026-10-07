@@ -1,4 +1,5 @@
-/* Plain standard-library modules: they already exist in Python, so all they need is to be importable and have autocomplete. */
+/* Plain standard-library modules: they already exist in Python, so all they need is to be importable and have autocomplete.
+   (pathlib works on the run's temporary folder, which is the working directory and is deleted when the run ends.) */
 PyLibs.add({
   name: 'random',
   members: 'random randint randrange choice choices sample shuffle uniform gauss seed getrandbits triangular normalvariate expovariate',
@@ -14,4 +15,10 @@ PyLibs.add({
 PyLibs.add({
   name: 'enum',
   members: 'Enum IntEnum Flag IntFlag StrEnum auto unique',
+});
+PyLibs.add({
+  name: 'pathlib',
+  members: 'Path PurePath PurePosixPath PureWindowsPath',
+  // after "p." when we don't know what p is (a Path): methods, and the attributes people reach for
+  methods: 'read_text write_text read_bytes write_bytes exists is_file is_dir mkdir iterdir glob rglob unlink rmdir rename replace touch stat resolve absolute expanduser joinpath with_name with_suffix with_stem relative_to is_relative_to samefile cwd home stem suffix suffixes parent parents',
 });

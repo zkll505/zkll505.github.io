@@ -16,7 +16,7 @@ name. How to write one, field by field: [../docs/ADDING_A_LIBRARY.md](../docs/AD
 
 | Folder | Importable as | Has `lib.py` | What it adds |
 | --- | --- | --- | --- |
-| `stdlib/` | `random`, `math`, `time`, `enum` | no | Nothing but permission to import them (they are already in Python) and autocomplete lists. |
+| `stdlib/` | `random`, `math`, `time`, `enum`, `pathlib` | no | Nothing but permission to import them (they are already in Python) and autocomplete lists. `pathlib` works on the run's temporary working folder, which is deleted when the run ends. |
 | `doctest/` | `doctest` | yes | The **Doctest** button: imports the active file and runs its `>>>` examples. |
 | `unittest/` | `unittest` | yes | The **Tests** button, and the report goes to stdout instead of red stderr. |
 | `tkinter/` | `tkinter`, `tkinter.ttk`, `.messagebox`, `.simpledialog`, `.font`, `.constants` | yes | A look-alike of tkinter (widgets, geometry managers, events, timers, canvas, menus) and the renderer that draws it as floating windows. The largest library by far. |
@@ -33,6 +33,9 @@ depends on exact pixel metrics is approximate (`winfo_width()` and font measurem
   the ttk look-alikes of the classic widgets; `StringVar` / `IntVar` / `DoubleVar` / `BooleanVar` with traces; `pack`, `grid`
   (weights, spans, sticky), `place`; `bind`, `bind_all`, virtual events; `after`, `after_cancel`, `update`; `messagebox`,
   `simpledialog`, `font.Font`.
+- **Events while the script runs:** key presses, clicks and the window's ✕ reach a program that is busy in a loop, as long as the loop
+  calls `update()` (see the mailbox in [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)). Closing the window mid-run raises `TclError` at the
+  next `update()`, as in Tk.
 - **Different on purpose:** dialogs cannot wait for a click, so they answer at once (`askyesno` says yes, `askstring` says
   `None`) and print a note. A window stays open after the script ends; `mainloop()` ends the script.
 - **Not supported:** images (`PhotoImage` raises a clear error), file dialogs, `Text` tags, real scrollbars (widgets scroll by
@@ -40,7 +43,7 @@ depends on exact pixel metrics is approximate (`winfo_width()` and font measurem
 
 ## turtle: what works and what doesn't
 
-- **Works:** `forward`/`back`/`left`/`right`/`goto`/`setheading`/`home`, `circle`, `dot`, `stamp`, `write`, pen up/down, pen and
+- **Works:** `forward`/`back`/`left`/`right`/`goto`/`teleport`/`setheading`/`home`, `circle`, `dot`, `stamp`, `write`, pen up/down, pen and
   fill colours (names, `#rrggbb`, RGB tuples with `colormode`), `begin_fill`/`end_fill`, shapes, `speed`, `tracer`/`update`,
   several turtles, `Screen()` (`bgcolor`, `setup`, `title`, `onkey`, `onscreenclick`, `ontimer`, `listen`, `exitonclick`,
   `textinput`), and all the module-level functions (`turtle.forward(...)`). `turtle.done()` ends the script and keeps the window.

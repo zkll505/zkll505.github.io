@@ -510,6 +510,116 @@ def example_library():
     runner.configure(json.dumps(names))
 
 
+PATHLIB = '''from pathlib import Path
+p = Path("notes.txt")
+p.write_text("hi")
+print(p.read_text(), p.exists(), p.suffix, Path(__file__).name, Path("a/b.py").parent)
+'''
+TELEPORT = '''import turtle
+t = turtle.Turtle()
+t.speed(0)
+t.teleport(10, 20)
+t.teleport(y=5)
+print(t.pos(), t.isdown())
+turtle.teleport(-3, 4)
+print(turtle.pos())
+'''
+
+
+def last_tree():
+    """The newest frame the page would have: the worker asks for the final one right after run() (a frame can be throttled before that)."""
+    return json.loads(runner.gui_pump("tkinter")).get("tree") or POSTS[-1]
+
+
+def pathlib_and_teleport():
+    """pathlib works on the run's temporary folder (the working directory); turtle.teleport moves without drawing, whatever the pen does."""
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        r = json.loads(runner.run(json.dumps({"main.py": PATHLIB}), "main.py"))
+    assert o.getvalue() == "hi True .txt main.py a\n" and r["error"] is None, (o.getvalue(), r["error"])
+    POSTS.clear()
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        runner.run(json.dumps({"t.py": TELEPORT}), "t.py")
+    assert o.getvalue() == "(10.00,5.00) True\n(-3.00,4.00)\n", o.getvalue()
+    canvas = next(n for n in _walk(last_tree()["wins"][0]) if n["t"] == "canvas")
+    assert not [i for i in canvas["items"] if i["t"] == "line"], "teleport draws no line even with the pen down"
+    runner.gui_stop()
+
+
+KEYLOOP = '''import tkinter as tk
+import time
+root = tk.Tk()
+seen = []
+root.bind("<KeyRelease-Left>", lambda e: seen.append(e.keysym))
+n = 0
+while len(seen) < 2 and n < 100:
+    root.update()
+    time.sleep(0.02)
+    n += 1
+print(seen)
+'''
+FOREVER = '''import time
+import tkinter as tk
+root = tk.Tk()
+while True:
+    root.update()
+    time.sleep(0.02)
+'''
+TURTLE_FOREVER = '''import time
+import turtle
+turtle.speed(0)
+while True:
+    turtle.forward(1)
+    turtle.update()
+    time.sleep(0.02)
+'''
+BEAT = '''import tkinter as tk
+root = tk.Tk()
+for i in range(15000):
+    root.update()
+print("done")
+'''
+
+
+def window_events():
+    """Events made while a script is busy reach it through the mailbox (that is what lets arrow keys steer an animation loop); a window
+    closed mid-run ends the script (TclError / turtle.Terminator); a program that keeps updating its window is not an infinite loop."""
+    real, sent = runner.mailbox, []
+
+    def run(src, make):  # runs src; make(window id) is what the stand-in mailbox delivers once the program has shown its window
+        def fake(lib):
+            if lib == "tkinter" and POSTS and POSTS[-1]["wins"] and not sent:
+                sent.append(1)
+                return make(POSTS[-1]["wins"][0]["id"])
+            return []
+        POSTS.clear()
+        sent.clear()
+        runner.mailbox = fake
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as o, contextlib.redirect_stderr(io.StringIO()):
+                r = json.loads(runner.run(json.dumps({"m.py": src}), "m.py"))
+        finally:
+            runner.mailbox = real
+        return r, o.getvalue()
+
+    close = lambda w: [{"t": "close", "id": w}]
+    r, out = run(KEYLOOP, lambda w: [{"t": "ev", "id": w, "k": "keyup", "keysym": "Left"}] * 2)
+    assert out == "['Left', 'Left']\n" and r["error"] is None, (out, r["error"])
+    runner.gui_stop()
+    r, out = run(FOREVER, close)
+    assert r["error"] and "application has been destroyed" in r["error"]["msg"] and not r["gui"], r
+    r, out = run(TURTLE_FOREVER, close)
+    assert r["error"] and "Terminator" in r["error"]["msg"], r
+    r, out = run("import turtle\nturtle.forward(5)\n", lambda w: [])  # the call after Terminator opens a fresh window
+    assert r["error"] is None and r["gui"], r
+    runner.gui_event("tkinter", json.dumps({"t": "close", "id": last_tree()["wins"][0]["id"]}))  # closed AFTER the script ended ...
+    r, out = run("import turtle\nturtle.forward(5)\n", lambda w: [])
+    assert r["error"] is None and r["gui"], "... must not make the next run raise Terminator"
+    runner.gui_stop()
+    r, out = run(BEAT, lambda w: [])  # 30,000 traced lines but LIMIT is 20,000: update() is a heartbeat
+    assert out == "done\n" and r["error"] is None, (out, r["error"])
+    runner.gui_stop()
+
+
 if __name__ == "__main__":
     runner.LIMIT = 20_000  # a smaller cutoff keeps the infinite-loop checks fast
     analyze()
@@ -523,5 +633,7 @@ if __name__ == "__main__":
     tkinter_star_import()
     turtle_lib()
     example_library()
+    pathlib_and_teleport()
+    window_events()
     enum_and_unittest()
     print("ok")

@@ -12,13 +12,15 @@ cw (grid row/column weights)} plus whatever the widget's _extra() adds (its text
 Going the other way, the page sends events (a click, typing, a key press, a menu choice) and dispatch() runs the matching
 callbacks. `r` is bumped only when PYTHON changes a value; the page overwrites what the user typed only when `r` changes.
 Time never really passes between events: after() timers are held in _ST["after"] and the page calls tick() when one is due.
+A script that loops forever (an animation) is never idle, so update() also collects the events the user made meanwhile from the mailbox
+(see _poll) and raises TclError once the window has been closed, as real Tk does.
 The functions at the bottom (dispatch, tick, pump, active, finish, reset, set_post and the exit exception) are the hooks
 runner.py drives; see gui_hooks."""
 import itertools, json, re, sys, time, traceback, types
 
 
 class TclError(Exception):
-    pass
+    __module__ = "_tkinter"  # so a traceback reads _tkinter.TclError, as in the real module
 
 
 class _MainloopExit(BaseException):
@@ -33,9 +35,10 @@ _ids = itertools.count(1)  # widget ids, unique for the whole session
 #   fn       focus serial counter                                          post     function that sends a JSON frame to the page
 #   shown    a frame was asked for (update()/mainloop()); until then a script that builds widgets and ends shows nothing
 #   notes    one-time "answered immediately" notices already printed       all      bind_all() bindings
-#   flushed  time of the last frame (throttles update() in tight loops)
+#   flushed  time of the last frame (throttles update() in tight loops)    poll_at   earliest time of the next mailbox read
+#   gen      counts runs (reset() adds one): lets a library tell "closed during this run" from "left over from an earlier run"
 _ST = {"roots": [], "dirty": False, "after": [], "afterid": 0, "dialogs": [], "focus": None, "fn": 0, "shown": False,
-       "post": None, "notes": set(), "all": {}, "flushed": 0.0}
+       "post": None, "notes": set(), "all": {}, "flushed": 0.0, "poll_at": 0.0, "gen": 0}
 _REG = {}  # widget id -> widget (events from the page name widgets by id)
 
 # the constants of tkinter.constants: `from tkinter import *` exports them
@@ -686,7 +689,11 @@ class Misc:
         _ST["after"][:] = [a for a in _ST["after"] if a[1] != aid]
 
     def update(self):
+        if not self._alive:  # as in Tk: the user closed the window while the script was still running
+            raise TclError('can\'t invoke "update" command: application has been destroyed')
+        _heartbeat()  # a program that keeps updating its window is animating, not stuck: its lines don't count towards the infinite-loop cutoff
         _ST["shown"] = True
+        _poll()
         _tick()
         if time.monotonic() - _ST["flushed"] > 0.016:  # a loop calling update() thousands of times shouldn't post a frame each time
             _flush()
@@ -1600,6 +1607,18 @@ def _tick():
             _call(a[2], *a[3])
 
 
+def _poll():
+    """Handle the events the user made while the script was busy. The page can't message a running program, so it leaves them in a
+    mailbox (a service worker; runner.mailbox) and update() collects them here: this is what lets arrow keys steer an animation
+    loop. Each poll is a synchronous request, so a slow one pushes the next further away (never more than about a tenth of the time)."""
+    now = time.monotonic()
+    if now < _ST["poll_at"]:
+        return
+    for ev in _mailbox():
+        dispatch(ev)
+    _ST["poll_at"] = time.monotonic() + min(0.1, max(0.016, 8 * (time.monotonic() - now)))
+
+
 def _next():
     """Milliseconds until the next timer (None = no timer): the page calls tick() after that long."""
     if not _ST["after"] or not any(r._alive for r in _ST["roots"]):
@@ -1701,7 +1720,7 @@ def reset():
     _ST["dialogs"].clear()
     _ST["all"].clear()
     _ST["notes"].clear()
-    _ST.update(dirty=False, focus=None, shown=False)
+    _ST.update(dirty=False, focus=None, shown=False, poll_at=0.0, gen=_ST["gen"] + 1)
     _REG.clear()
 
 
@@ -1775,6 +1794,7 @@ def install():
 
     tk = mod("tkinter", __getattr__=getattr_, __path__=[], **tkpub)
     tk.__all__ = sorted(tkpub)
+    tk._run = lambda: _ST["gen"]  # private: which run we are in (turtle uses it); underscore names are not exported by `import *`
     sys.modules["_tkinter"] = mod("_tkinter", TclError=TclError)
 
 
