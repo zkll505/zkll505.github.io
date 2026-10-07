@@ -617,6 +617,14 @@ PyLibs.views().forEach(l => l.view.setSend(ev => {
 }));
 
 // ---- import / export / share
+// Confirm a click for a moment: the button shows `text` and turns green, then goes back (a second click just restarts the timer)
+const flash = (btn, text, ms = 1800) => {
+  btn.dataset.label ||= btn.textContent.trim();
+  clearTimeout(btn._flash);
+  btn.textContent = text;
+  btn.classList.add('done');
+  btn._flash = setTimeout(() => { btn.textContent = btn.dataset.label; btn.classList.remove('done'); }, ms);
+};
 const download = (blob, name) => {
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
   a.click();
@@ -703,7 +711,7 @@ async function unpack(s) {
 }
 $('#share').onclick = async () => {
   const url = location.href.split('#')[0] + '#p=' + await pack(S.files);
-  try { await navigator.clipboard.writeText(url); setStatus(`Link copied (${url.length.toLocaleString()} characters)`); }
+  try { await navigator.clipboard.writeText(url); setStatus(`Link copied (${url.length.toLocaleString()} characters)`); flash($('#share'), '✓ Link copied'); }
   catch { prompt('Copy this link:', url); }
   if (url.length > 8000) alert('This link is very long and some chat apps may cut it off. Use Export to send a zip instead.');
   else if (location.protocol === 'file:') alert('This page is opened from a file, so the link only works on this computer. Once it is hosted (GitHub Pages) the link works for everyone.');

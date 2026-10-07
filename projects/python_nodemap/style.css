@@ -22,6 +22,8 @@ button.pri { background: #0e639c; color: #fff; }
 button.pri:hover:not(:disabled) { background: #1177bb; }
 button.stop { background: #c42b1c; color: #fff; }
 button.stop:hover { background: #d93a2b; }
+button.done, button.done:hover { background: #2e7d32; color: #fff; } /* a click was confirmed (the Share button after copying the link) */
+#share { min-width: 8.6em; transition: background-color .15s; } /* wide enough for "✓ Link copied", so the toolbar doesn't shift */
 button[hidden] { display: none; }
 input { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--line); border-radius: 2px; padding: 3px 8px; }
 input:focus { outline: 1px solid #0078d4; border-color: transparent; }
