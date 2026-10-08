@@ -31,11 +31,15 @@ Events while a program runs: a busy worker can't receive messages, so the page p
 close button) in a service worker's mailbox and the running program reads them with a synchronous request, mailbox(). A library
 polls it from its update(); see sw.js and docs/ARCHITECTURE.md. gui_pump() hands over whatever is left when the program ends.
 
+Locked files: the page passes the names of files the user may not open (docs/LOCKED_FILES.md). They still run, but only from
+memory (nothing on disk for open() to read, no source lines in tracebacks or inspect) and untraced, so the node map and the step
+bar never show them. See Hidden inside run().
+
 How tracing works: a "line" event fires BEFORE the line runs, so what a statement produced is snapshotted at the next line
 event of the same frame (or at its "return"). That is why `last` remembers the previous line of each frame.
 Safety limits (constants below): LIMIT traced lines (assumed infinite loop), MAXSTEPS / MAXFACTS timeline entries, OUTLIM output.
 """
-import ast, builtins, importlib, json, os, random, re, shutil, sys, tempfile, traceback, types
+import ast, builtins, importlib, importlib.util, json, os, random, re, shutil, sys, tempfile, traceback, types
 
 try:
     import js  # only inside Pyodide: used to hand GUI windows to the page
@@ -405,6 +409,7 @@ _LIVE = {}
 
 _MAIL = {"url": "", "ok": True}  # where the service worker's mailbox is ("" = none), and whether it has answered so far
 _BEAT = [lambda: None]  # heartbeat(): set by run() to reset the traced-line counter (see load_lib)
+_HIDDEN = []  # module names of the locked files of the current run (what a library's _locked() returns)
 
 
 def mailbox(lib):
@@ -434,9 +439,10 @@ def configure(allowed_json):
 def load_lib(name, src):
     """Run a library's lib.py once, at start-up (docs/ADDING_A_LIBRARY.md). Picks up the names it may define: install(),
     run_modes (-> MODES) and gui_hooks (-> GUI). Its frames are hidden from students' tracebacks (the "<lib name>" filename)."""
-    # _mailbox() and _heartbeat() are handed to every library (docs/ADDING_A_LIBRARY.md): events that arrived while the program was
-    # busy, and "I am still making progress" (an animation that keeps updating its window is not an infinite loop)
-    ns = {"__name__": name + "_lib", "_mailbox": lambda: mailbox(name), "_heartbeat": lambda: _BEAT[0]()}
+    # _mailbox(), _heartbeat() and _locked() are handed to every library (docs/ADDING_A_LIBRARY.md): events that arrived while the program
+    # was busy; "I am still making progress" (an animation that keeps updating its window is not an infinite loop); and the module
+    # names of the project's locked files (the unittest library runs the tests in them)
+    ns = {"__name__": name + "_lib", "_mailbox": lambda: mailbox(name), "_heartbeat": lambda: _BEAT[0](), "_locked": lambda: list(_HIDDEN)}
     exec(compile(src, f"<lib {name}>", "exec"), ns)
     if "install" in ns:
         ns["install"]()  # e.g. register fake modules in sys.modules
@@ -457,9 +463,10 @@ def gui_cleanup():
         _LIVE.clear()
 
 
-def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url=""):
+def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="", locked_json="[]"):
     """Run 'main' with line tracing: as __main__, or (for a mode added by a library, e.g. doctest) as a module handed to that mode."""
     files, answers = json.loads(files_json), json.loads(answers_json)
+    locked, hidden = set(json.loads(locked_json)) - {main}, {}  # locked = file names the user may not open; hidden = their source by module name
     _MAIL.update(url=mailbox_url, ok=True)
     random.seed(seed)  # same seed on every re-run, so replaying input() answers repeats the same random numbers
     for g in GUI.values():
@@ -475,6 +482,9 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="")
     # cur = (file, line) being executed (to place an error at the right spot); outn / outover count the output against OUTLIM
     steps, facts, over, cur, outn, outover = [], [], [False], [None, 0], [0], [False]  # timeline: steps = [file, line, ...]
     for name, src in files.items():
+        if name in locked:  # kept in memory only (see Hidden) and out of the trace
+            hidden[name[:-3]] = src
+            continue
         path = os.path.join(root, name)
         with open(path, "w", encoding="utf-8") as f:
             f.write(src)
@@ -485,6 +495,8 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="")
             tgt.setdefault(n["line"], []).extend(n["show"])
         info[path] = (name, defs, prm)
         T[name] = {"vals": {}, "hits": {}, "calls": {}, "rets": {}, "params": {}}
+
+    _HIDDEN[:] = sorted(hidden)
 
     def fact(name, kind, line, data):  # something that became known right before step number len(steps)/2
         if len(steps) < 2 * MAXSTEPS and len(facts) < MAXFACTS:
@@ -584,11 +596,31 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="")
     mod.__file__ = os.path.join(root, main)
     saved = {}
 
+    class Hidden:  # serves the locked files as modules from memory: `import tests_hidden` works, but there is no file for open() to read,
+        # and no source for tracebacks, inspect or doctest to quote (get_source says there is none)
+        def find_spec(self, name, path=None, target=None):
+            if name in hidden:
+                return importlib.util.spec_from_loader(name, self, origin=os.path.join(root, name + ".py"))
+
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, module):
+            module.__file__ = module.__spec__.origin
+            exec(compile(hidden[module.__name__], module.__file__, "exec"), module.__dict__)
+
+        def get_source(self, name):
+            return None
+
+    finder = Hidden()
+
     def enter():  # install the sandbox: import guard, traced execution, our own stdout, project files on the path
         saved.update(main=sys.modules.get("__main__"), path=sys.path[:], cwd=os.getcwd(), out=sys.stdout, err=sys.stderr)
         builtins.__import__, builtins.input = guard, ui_input
         sys.stdout, sys.stderr = Scrub(sys.stdout), Scrub(sys.stderr)
         sys.path.insert(0, root)
+        if hidden:
+            sys.meta_path.insert(0, finder)
         os.chdir(root)
         importlib.invalidate_caches()
         sys.modules[mod.__name__] = mod
@@ -598,6 +630,8 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="")
         sys.settrace(None)
         builtins.__import__, builtins.input = real_import, real_input
         sys.path[:] = saved["path"]
+        if finder in sys.meta_path:
+            sys.meta_path.remove(finder)
         os.chdir(saved["cwd"])
         sys.stdout, sys.stderr = saved["out"], saved["err"]
         sys.modules.pop("__main__", None)

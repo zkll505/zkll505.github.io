@@ -146,12 +146,13 @@ from student callbacks and print them to `sys.stderr` (as tkinter does) so one b
 
 ### Events while the script is busy
 
-A program stuck in `while True:` can't receive messages, so the page leaves its window events in a mailbox. `runner.py` puts two
+A program stuck in `while True:` can't receive messages, so the page leaves its window events in a mailbox. `runner.py` puts three
 functions in your `lib.py`'s namespace (their leading underscore keeps them out of the module you build):
 
 | Function | Use |
 | --- | --- |
 | `_mailbox()` | The events (a list of dicts, whatever your view passed to `send`) that arrived since the last call. One synchronous request, so call it at most about 30 times a second; tkinter does it from `update()` and backs off when it is slow. |
+| `_locked()` | The module names of the project's **locked files** (files the user can't open, [LOCKED_FILES.md](LOCKED_FILES.md)) for this run, as a list. The `unittest` library imports each one and runs its tests. |
 | `_heartbeat()` | Call it when your library shows the program is alive (a frame was drawn). It restarts the infinite-loop count, so an animation isn't cut off after 1.5 million lines. |
 
 Pass what `_mailbox()` returns to your own `dispatch`, as `tkinter`'s `_poll()` does. If your windows can be closed, make your update

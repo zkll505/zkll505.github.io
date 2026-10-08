@@ -1,6 +1,6 @@
 /* Runs Pyodide in a Web Worker so the page never freezes and Stop can kill a run.
    app.js turns this function's source into a Blob worker, so it can't use outside variables.
-   Messages in:  init {url, runner, libs, allowed, sizes} | analyze | run {..., mailbox} | guievent {lib, ev} | guireset
+   Messages in:  init {url, runner, libs, allowed, sizes} | analyze | run {..., mailbox, locked} | guievent {lib, ev} | guireset
    (mailbox = the URL of the service worker's mailbox, or '': how the running program reads window events; see runner.mailbox)
    Messages out: out {cls, text} | progress | gui {lib, tree} (tree null = close the windows) | trace {files} | {id, result|error} */
 function workerMain() {
@@ -71,7 +71,7 @@ function workerMain() {
         result = api.analyze(m.src, JSON.stringify(m.mods));
       } else if (m.type === 'run') {
         closeWindows(); // the previous program's windows must not outlive this run (also covers a tree already in flight)
-        result = api.run(JSON.stringify(m.files), m.main, m.mode, JSON.stringify(m.answers), m.seed, m.mailbox || '');
+        result = api.run(JSON.stringify(m.files), m.main, m.mode, JSON.stringify(m.answers), m.seed, m.mailbox || '', JSON.stringify(m.locked || []));
         flush();
         libs().forEach(lib => guiReply(api.gui_pump(lib))); // a window left open by mainloop(): start its timers
       }

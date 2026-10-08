@@ -62,7 +62,7 @@ are pushed by the worker whenever it likes.
 | --- | --- | --- |
 | page → worker | `init {url, runner, libs, allowed, sizes}` | Download and start Pyodide, run `runner.py`, `configure()`, `load_lib()` each library. |
 | page → worker | `analyze {src, mods}` | Static analysis of one file. Reply `{id, result}` with the JSON string. |
-| page → worker | `run {files, main, mode, answers, seed, mailbox}` | Run a program (`mailbox` is the URL of the service worker's mailbox, or `''`). Reply `{id, result}` with the JSON string. |
+| page → worker | `run {files, main, mode, answers, seed, mailbox, locked}` | Run a program (`mailbox` is the URL of the service worker's mailbox, or `''`; `locked` lists the files the user may not open). Reply `{id, result}` with the JSON string. |
 | page → worker | `guievent {lib, ev}` | The user did something in a library's window (no reply of its own; frames come back as `gui`). |
 | page → worker | `guireset` | The project was replaced: stop the windows and their timers. |
 | worker → page | `{id, result}` or `{id, error}` | The reply to a request. |
@@ -171,6 +171,19 @@ Two related rules live in the same place. `update()` on a destroyed window raise
 which resets the traced-line counter, because an animation that keeps drawing is not the infinite loop that `LIMIT` is there to catch
 (Stop still works). Libraries get `_mailbox()` and `_heartbeat()` in their namespace (see the library guide). `input()` still uses the
 re-run trick; the mailbox could carry its answers too, but a blocking `input()` needs a wait, which a synchronous poll can't do cheaply.
+
+## Locked files
+
+A file with a `# pynodemap lock <password>` line is a **locked file** ([LOCKED_FILES.md](LOCKED_FILES.md) is the user's view). `app.js` finds the
+tag (`lockOf`), keeps a per-session set of files whose password was entered, and refuses to open any other locked file: in
+`openFile` itself (so tabs, the explorer, a saved project and the step bar are all covered), in the console's traceback links, in
+rename/delete/import, in autocomplete, in Export. Share deliberately includes them, with the tag, so an assignment travels.
+
+The page passes the locked names with every `run`. `run()` then keeps those files off the disk: a small meta path finder (`Hidden`)
+imports them from memory, compiled with a filename but no source (`get_source` returns `None`), so `open()` finds nothing and tracebacks
+have no line to quote. They are left out of `info`, so they are never traced: no value boxes, steps or hit counts. `unittest`'s run mode
+asks for their names (`_locked()`) and runs their tests too. The lock is a deterrent, not security (the text is in the browser and in
+every share link), and the docs say so.
 
 ## Limits at a glance
 

@@ -100,6 +100,24 @@ const setStatus = t => { $('#st').textContent = t; };
 const modsOf = () => Object.keys(S.files).map(f => f.slice(0, -3)).sort();
 const okName = n => /^[A-Za-z_]\w*\.py$/.test(n);
 
+// ---- locked files. A line `# pynodemap lock <password>` in a file makes it unopenable: the explorer shows it with a 🔒, and clicking it
+// asks for the password. A locked file still runs (import it, or press Tests) but its source stays hidden, and Export and Share leave
+// it out. This is a soft lock for the classroom, not security: docs/LOCKED_FILES.md says what it does and doesn't protect.
+const LOCK = /^[ \t]*#[ \t]*pynodemap[ \t]+lock\b[ \t]*(.*?)[ \t]*$/im;
+S.unlocked = new Set(); // locked files whose password was entered during this session (never saved)
+const lockOf = n => { const m = LOCK.exec(S.files[n] ?? ''); return m ? m[1] : null; }; // its password ('' = none: sealed), or null if it isn't locked
+const isLocked = n => lockOf(n) !== null && !S.unlocked.has(n);
+const firstOpenable = skip => Object.keys(S.files).sort().find(n => n !== skip && !isLocked(n));
+// the files as autocomplete may see them: a locked file's names stay secret
+const visibleFiles = () => Object.fromEntries(Object.entries(S.files).map(([n, s]) => [n, isLocked(n) ? '' : s]));
+// a saved project must never open a locked file by itself, as the active file or in a tab
+S.open = S.open.filter(n => n in S.files && !isLocked(n));
+if (isLocked(S.active)) {
+  S.active = S.open[0] || firstOpenable();
+  if (!S.active) { S.files['untitled.py'] = ''; S.active = 'untitled.py'; } // a project that is nothing but locked files
+}
+if (!S.open.includes(S.active)) S.open.push(S.active);
+
 // ---- the mailbox. While a program runs, its worker is busy and can't receive messages, so a key press or click made during a
 // `while True:` animation would never reach it. sw.js (a service worker) keeps those events in a mailbox instead, and the running
 // program reads it at each window update. The Python worker has to be created AFTER the service worker controls the page, because
@@ -164,6 +182,7 @@ function out(text, cls = '') { // append text to the console; `File "x.py", line
   text.split(/(File "[^"]+", line \d+)/).forEach((p, i) => {
     if (i % 2 === 0) return span.append(p);
     const [, f, l] = /File "([^"]+)", line (\d+)/.exec(p);
+    if (isLocked(f)) return span.append(p); // a locked file can't be opened: plain text, no link
     const a = document.createElement('a');
     a.textContent = p; a.dataset.file = f; a.dataset.line = l;
     span.append(a);
@@ -179,12 +198,12 @@ W.onOut = (text, cls) => {
 };
 $('#out').onclick = e => {
   const a = e.target.closest('a');
-  if (a && S.files[a.dataset.file]) { openFile(a.dataset.file); gotoLine(+a.dataset.line); }
+  if (a && S.files[a.dataset.file] && !isLocked(a.dataset.file)) { openFile(a.dataset.file); gotoLine(+a.dataset.line); }
 };
 $('#clear').onclick = () => { $('#out').textContent = ''; };
 
 // ---- editor
-const complete = c => c.showHint({ hint: cc => PyComplete.hint(cc, S.files), completeSingle: false });
+const complete = c => c.showHint({ hint: cc => PyComplete.hint(cc, visibleFiles()), completeSingle: false });
 const cm = CodeMirror($('#cm'), {
   mode: 'python', theme: 'vscode', lineNumbers: true, gutters: ['lint', 'CodeMirror-linenumbers'], indentUnit: 4,
   matchBrackets: true, autoCloseBrackets: true, styleActiveLine: true,
@@ -197,6 +216,8 @@ const cm = CodeMirror($('#cm'), {
 const docOf = n => (docs[n] ||= CodeMirror.Doc(S.files[n], 'python'));
 cm.on('change', () => { // every edit: store it, drop the results of the last run (they no longer match), re-analyse shortly
   S.files[S.active] = cm.getValue();
+  const tagged = lockOf(S.active) !== null; // typing (or deleting) the lock tag in the open file: it stays open until the page is reloaded
+  if (tagged !== S.unlocked.has(S.active)) { if (tagged) S.unlocked.add(S.active); else S.unlocked.delete(S.active); chrome(); }
   delete S.trace[S.active];
   S.tl = null; S.step = null; S.error = null; // the recorded run no longer matches the code
   stopPlay(); showMarks(); updateStepper();
@@ -272,12 +293,43 @@ function showHints() { // draw the analyser's hints: a squiggle under the line, 
 // ---- files: explorer + tabs
 function chrome() { // re-render the tab strip, the explorer list and the map's title from S
   $('#tabs').innerHTML = S.open.map(n => `<div class="tab${n === S.active ? ' on' : ''}" data-f="${n}">${n}<b data-x="${n}">×</b></div>`).join('');
-  $('#files').innerHTML = Object.keys(S.files).sort().map(n => `<li class="${n === S.active ? 'on' : ''}" data-f="${n}"><span>${n}</span><i data-ren="${n}" title="Rename">✎</i><i data-del="${n}" title="Delete">✕</i></li>`).join('');
+  $('#files').innerHTML = Object.keys(S.files).sort().map(n => {
+    const lk = lockOf(n) !== null, shut = isLocked(n); // 🔒 = locked, 🔓 = locked but its password was entered this session
+    return `<li class="${n === S.active ? 'on' : ''}${shut ? ' locked' : ''}" data-f="${n}"${lk ? ` title="${shut ? 'Locked: click to enter the password' : 'A locked file, open for this session'}"` : ''}><span>${lk ? (shut ? '🔒 ' : '🔓 ') : ''}${n}</span>${shut ? '' : `<i data-ren="${n}" title="Rename">✎</i><i data-del="${n}" title="Delete">✕</i>`}</li>`;
+  }).join('');
   $('#mapname').textContent = '· ' + S.active;
 }
 // remove every trace of file n (its text, document and cached results)
 const forget = n => [S.files, docs, S.trace, S.graph, S.key, S.err, S.hints, S.fold].forEach(o => delete o[n]);
+function askPassword(n) { // shows the password dialog (index.html); resolves true when the right password is typed
+  const dlg = $('#pw'), input = $('#pw-in'), pw = lockOf(n);
+  $('#pw-name').textContent = n;
+  $('#pw-err').hidden = true;
+  input.value = '';
+  dlg.returnValue = '';
+  return new Promise(resolve => {
+    $('#pw-form').onsubmit = e => {
+      e.preventDefault();
+      if (input.value === pw) dlg.close('ok');
+      else { $('#pw-err').hidden = false; input.select(); }
+    };
+    $('#pw-cancel').onclick = () => dlg.close('cancel');
+    dlg.onclose = () => resolve(dlg.returnValue === 'ok');
+    dlg.showModal();
+    input.focus();
+  });
+}
+async function unlock(n) { // true once file n may be opened: it isn't locked, it was unlocked already, or the right password was entered
+  const pw = lockOf(n);
+  if (pw === null || S.unlocked.has(n)) return true;
+  if (pw === '') { alert(`${n} is locked and can't be opened here.`); return false; } // `# pynodemap lock` with no password seals it
+  if (!await askPassword(n)) return false;
+  S.unlocked.add(n); // for this session only
+  chrome();
+  return true;
+}
 function openFile(n) { // make n the active file (adding a tab if needed) and redraw everything that depends on it
+  if (isLocked(n)) { unlock(n).then(ok => { if (ok) openFile(n); }); return; } // a locked file asks for its password first
   if (!S.open.includes(n)) S.open.push(n);
   S.active = n;
   cm.swapDoc(docOf(n));
@@ -286,7 +338,7 @@ function openFile(n) { // make n the active file (adding a tab if needed) and re
 }
 function closeTab(n) {
   S.open = S.open.filter(x => x !== n);
-  if (!S.open.length) S.open = [Object.keys(S.files).find(x => x !== n) || n];
+  if (!S.open.length) S.open = [firstOpenable(n) || n];
   openFile(S.active === n || !S.open.includes(S.active) ? S.open[0] : S.active);
 }
 function askName(msg, def) { // ask for a file name; it must be importable (letters, digits, _), so `import name` works
@@ -303,12 +355,14 @@ function newFile() {
   openFile(n);
 }
 function renameFile(old) {
+  if (isLocked(old)) return;
   const n = askName('Rename to:', old);
   if (!n || n === old) return;
   if (n in S.files) return alert(n + ' already exists.');
   const src = S.files[old], doc = docs[old];
   forget(old);
   S.files[n] = src;
+  if (S.unlocked.delete(old)) S.unlocked.add(n); // a renamed file stays unlocked
   if (doc) docs[n] = doc;
   S.open = S.open.map(x => (x === old ? n : x));
   if (S.active === old) S.active = n;
@@ -316,11 +370,12 @@ function renameFile(old) {
   chrome(); save(); showMarks(); updateStepper(); refresh();
 }
 function deleteFile(n) {
-  if (Object.keys(S.files).length < 2) return alert('Keep at least one file.');
+  if (isLocked(n)) return;
+  if (Object.keys(S.files).length < 2 || !firstOpenable(n)) return alert('Keep at least one file that can be opened.');
   if (!confirm(`Delete ${n}? This can't be undone.`)) return;
   forget(n);
   S.open = S.open.filter(x => x !== n);
-  if (!S.open.length) S.open = [Object.keys(S.files)[0]];
+  if (!S.open.length) S.open = [firstOpenable()];
   S.tl = null; S.step = null; S.error = null;
   openFile(S.active === n ? S.open[0] : S.active);
 }
@@ -532,7 +587,7 @@ async function run(mode = 'run') { // mode = 'run', or the id of a mode a librar
   PyLibs.closeViews();
   const sw = navigator.serviceWorker?.controller;
   if (sw) PyLibs.views().forEach(l => sw.postMessage({ lib: l.name, clear: true })); // nothing left over from the last run
-  job = { files: { ...S.files }, main: S.active, mode, answers: [], seed: Math.floor(Math.random() * 2 ** 31) };
+  job = { files: { ...S.files }, main: S.active, mode, answers: [], seed: Math.floor(Math.random() * 2 ** 31), locked: Object.keys(S.files).filter(isLocked) };
   S.ranFiles = { ...S.files };
   $('#out').textContent = '';
   shown = 0;
@@ -548,7 +603,7 @@ async function attempt() { // one execution of the job; asks for more input and 
   let res = null;
   pyBusy = true;
   try {
-    res = JSON.parse(await W.call('run', { files: j.files, main: j.main, mode: j.mode, answers: j.answers, seed: j.seed, mailbox: mailboxUrl() }));
+    res = JSON.parse(await W.call('run', { files: j.files, main: j.main, mode: j.mode, answers: j.answers, seed: j.seed, mailbox: mailboxUrl(), locked: j.locked }));
   } catch (e) {
     if (e === STOPPED) return;
     out(String(e.message || e) + '\n', 'err');
@@ -649,8 +704,11 @@ function replaceProject(got) { // a zip or a share link is a whole project: ever
   S.files = { ...got };
   for (const n of Object.keys(docs)) delete docs[n];
   Object.assign(S, { trace: {}, graph: {}, key: {}, err: {}, hints: {}, fold: {}, tl: null, step: null, views: null, error: null, ranFiles: null });
-  S.open = [names.includes('main.py') ? 'main.py' : names[0]];
-  openFile(S.open[0]);
+  S.unlocked = new Set(); // a different project: its locked files are locked again
+  let first = [...(names.includes('main.py') ? ['main.py'] : []), ...names].find(n => !isLocked(n));
+  if (!first) { S.files['untitled.py'] = ''; first = 'untitled.py'; } // nothing but locked files
+  S.open = [first];
+  openFile(first);
 }
 async function importFiles(list) { // .py files are merged in; a .zip replaces the whole project (after a confirmation)
   const got = {};
@@ -672,6 +730,8 @@ async function importFiles(list) { // .py files are merged in; a .zip replaces t
     if (lost.length && !confirm(`Importing a zip replaces everything in the explorer with the ${names.length} file(s) from the zip.\nThese current files will be removed or changed: ${shown}.\nContinue?`)) return;
     return replaceProject(got);
   }
+  const shut = names.filter(isLocked);
+  if (shut.length) return alert(`${shut.join(', ')} is locked, so it can't be replaced.`);
   const clash = names.filter(n => n in S.files && S.files[n] !== got[n]);
   if (clash.length && !confirm(`Replace ${clash.join(', ')} with the imported version?`)) return;
   mergeFiles(got);
@@ -680,8 +740,9 @@ $('#imp').onclick = () => $('#pick').click();
 $('#pick').onchange = async e => { await importFiles([...e.target.files]); e.target.value = ''; };
 $('#exp').onclick = async () => { // a zip with every .py and, for each, a PNG of its node map (with the values of the last run)
   setStatus('Exporting…');
-  const zip = new JSZip();
+  const zip = new JSZip(), left = [];
   for (const [name, src] of Object.entries(S.files)) {
+    if (isLocked(name)) { left.push(name); continue; } // a locked file is not handed out
     zip.file(name, src);
     try {
       const g = JSON.parse(await W.call('analyze', { src, mods: modsOf() }));
@@ -689,7 +750,7 @@ $('#exp').onclick = async () => { // a zip with every .py and, for each, a PNG o
     } catch {}
   }
   download(await zip.generateAsync({ type: 'blob' }), 'python_project.zip');
-  setStatus('Ready');
+  setStatus(left.length ? `Exported (locked files left out: ${left.join(', ')})` : 'Ready');
 };
 
 // A share link is the project, deflated + base64url, in the #fragment (never sent to a server): '#p=' + 'z' + data, or
@@ -710,6 +771,8 @@ async function unpack(s) {
   return JSON.parse(new TextDecoder().decode(s[0] === 'z' ? await pipe(raw, DecompressionStream) : raw));
 }
 $('#share').onclick = async () => {
+  // Locked files are included on purpose: a share link is how an assignment with hidden tests is sent out. The `# pynodemap lock` line
+  // travels inside the file, so whoever opens the link finds the file locked again.
   const url = location.href.split('#')[0] + '#p=' + await pack(S.files);
   try { await navigator.clipboard.writeText(url); setStatus(`Link copied (${url.length.toLocaleString()} characters)`); flash($('#share'), '✓ Link copied'); }
   catch { prompt('Copy this link:', url); }

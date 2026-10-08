@@ -18,7 +18,7 @@ name. How to write one, field by field: [../docs/ADDING_A_LIBRARY.md](../docs/AD
 | --- | --- | --- | --- |
 | `stdlib/` | `random`, `math`, `time`, `enum`, `pathlib` | no | Nothing but permission to import them (they are already in Python) and autocomplete lists. `pathlib` works on the run's temporary working folder, which is deleted when the run ends. |
 | `doctest/` | `doctest` | yes | The **Doctest** button: imports the active file and runs its `>>>` examples. |
-| `unittest/` | `unittest` | yes | The **Tests** button, and the report goes to stdout instead of red stderr. |
+| `unittest/` | `unittest` | yes | The **Tests** button (it also runs the tests in locked files), and the report goes to stdout instead of red stderr. |
 | `tkinter/` | `tkinter`, `tkinter.ttk`, `.messagebox`, `.simpledialog`, `.font`, `.constants` | yes | A look-alike of tkinter (widgets, geometry managers, events, timers, canvas, menus) and the renderer that draws it as floating windows. The largest library by far. |
 | `turtle/` | `turtle` | yes | The turtle module, drawn on tkinter's canvas (so it needs no renderer of its own). |
 

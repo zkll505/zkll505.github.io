@@ -183,6 +183,20 @@
         </footer>
 
         <!-- third-party code, from CDNs: CodeMirror 5 (the editor) and JSZip (zip import/export). Pyodide is loaded by the worker. -->
+        <!-- asks for the password of a locked file (see app.js: unlock) -->
+        <dialog id="pw">
+            <form id="pw-form" method="dialog">
+                <p><b id="pw-name"></b> is locked. Enter its password to open it.</p>
+                <input id="pw-in" type="password" autocomplete="off" spellcheck="false" aria-label="Password" />
+                <p id="pw-err" role="alert" hidden>That is not the password.</p>
+                <div class="pw-buttons">
+                    <button type="button" id="pw-cancel">Cancel</button>
+                    <button type="submit" class="pri">Open</button>
+                </div>
+            </form>
+        </dialog>
+
+        <!-- third-party code, from CDNs: CodeMirror 5 (the editor) and JSZip (zip import/export). Pyodide is loaded by the worker. -->
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>

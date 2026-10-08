@@ -627,6 +627,48 @@ def window_events():
     runner.gui_stop()
 
 
+SOLUTION = "def add(a, b):\n    return a + b\n"
+HIDDEN_TESTS = '''# pynodemap lock secret
+import unittest
+from solution import add
+
+
+class Hidden(unittest.TestCase):
+    def test_adds(self):
+        self.assertEqual(add(2, 3), 99)  # SECRET_EXPECTED_VALUE
+'''
+RUN_HIDDEN = "import unittest\nimport t_hidden\nunittest.main(module=t_hidden, exit=False)\n"
+
+
+def locked_files():
+    """A locked file still runs (import it, or press Tests) but is served from memory and untraced: no file for open() to read, no
+    source lines in tracebacks, nothing in the trace or the step timeline."""
+    files = {"solution.py": SOLUTION, "t_hidden.py": HIDDEN_TESTS}
+
+    def go(files, main, mode="run", locked=("t_hidden.py",)):
+        with contextlib.redirect_stdout(io.StringIO()) as o, contextlib.redirect_stderr(io.StringIO()) as e:
+            r = json.loads(runner.run(json.dumps(files), main, mode, "[]", 0, "", json.dumps(list(locked))))
+        return r, o.getvalue() + e.getvalue()
+
+    r, out = go(files, "solution.py", "unittest")  # the Tests button on the student's file also runs the hidden tests
+    assert "FAIL: test_adds" in out and "Ran 1 test" in out and "AssertionError: 5 != 99" in out, out
+    assert "SECRET_EXPECTED_VALUE" not in out and "assertEqual(add(2, 3), 99)" not in out, "no source line of a locked file in the report:\n" + out
+    assert 't_hidden.py", line 8' in out, out  # the file name and line are still given
+    r, out = go({**files, "main.py": RUN_HIDDEN}, "main.py")  # importing it works too
+    assert "FAIL: test_adds" in out and "SECRET_EXPECTED_VALUE" not in out, out
+    r, out = go({**files, "main.py": RUN_HIDDEN}, "main.py", locked=())  # control: unlocked, the same report quotes the source
+    assert "SECRET_EXPECTED_VALUE" in out and "Ran 1 test" in out, out
+    peek = "try:\n    print(open('t_hidden.py').read())\nexcept FileNotFoundError:\n    print('no such file')\n"
+    r, out = go({**files, "main.py": peek}, "main.py")
+    assert out.strip() == "no such file", out
+    r, out = go({**files, "main.py": RUN_HIDDEN}, "main.py")
+    tl = r["timeline"]
+    assert "t_hidden.py" not in r["files"] and tl["files"].index("t_hidden.py") not in tl["steps"][0::2], "a locked file is not traced"
+    boom = {"main.py": "x = 1\nimport boom\n", "boom.py": "# pynodemap lock\nraise ValueError('hidden')\n"}
+    r, out = go(boom, "main.py", locked=("boom.py",))
+    assert (r["error"]["file"], r["error"]["line"]) == ("main.py", 2) and "ValueError: hidden" in r["error"]["msg"], r["error"]  # blamed on the student's line
+
+
 if __name__ == "__main__":
     runner.LIMIT = 20_000  # a smaller cutoff keeps the infinite-loop checks fast
     analyze()
@@ -642,5 +684,6 @@ if __name__ == "__main__":
     example_library()
     pathlib_and_teleport()
     window_events()
+    locked_files()
     enum_and_unittest()
     print("ok")

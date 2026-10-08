@@ -23,6 +23,7 @@ calls `analyze()`, `run()` and the GUI hooks directly (the calls `worker.js` mak
 | `example_library` | `docs/examples/clicker`, the library the guide walks through |
 | `pathlib_and_teleport` | `pathlib` on the run's temporary folder; `turtle.teleport` |
 | `window_events` | Events reaching a running loop through the mailbox, a window closed mid-run ending the script, `update()` as a heartbeat for the loop cutoff |
+| `locked_files` | Locked files: still importable, run by the **Tests** button, but no file on disk, no source lines in tracebacks, not traced |
 | `enum_and_unittest` | `enum` and the **Tests** run mode |
 
 ## Adding a test

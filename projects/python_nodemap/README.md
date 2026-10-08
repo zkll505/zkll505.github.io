@@ -29,6 +29,8 @@ your browser's `localStorage`.
   allow-list.
 - **`input()`** works (the page asks for the answer in the console).
 - **Projects**: export a zip of every `.py` plus a PNG of each map, import a zip, or share the whole project as a link.
+- **Locked files**: a `# pynodemap lock <password>` line makes a file unopenable without the password, so an assignment can carry
+  tests the student can run (the **Tests** button, or `import`) but not read. See [docs/LOCKED_FILES.md](docs/LOCKED_FILES.md).
 - **Libraries** (each one is a plug-in, see below): `random`, `math`, `time`, `enum`, `pathlib`, `doctest`, `unittest`,
   `tkinter` (GUI windows) and `turtle`.
 
@@ -171,7 +173,7 @@ sw.js           service worker: a mailbox that delivers key and mouse events to 
 libs.js         the library registry  runner.py   analysis + traced execution (Python)
 libs/<name>/    one folder per library: lib.js (manifest) and lib.py (optional)
 tests/          python tests/test_backend.py
-docs/           NODE_MAP.md (what each part of the map means), ARCHITECTURE.md, ADDING_A_LIBRARY.md, examples/clicker
+docs/           NODE_MAP.md (what each part of the map means), LOCKED_FILES.md, ARCHITECTURE.md, ADDING_A_LIBRARY.md, examples/clicker
 ```
 
 ## Tests
