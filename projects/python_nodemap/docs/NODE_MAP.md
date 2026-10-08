@@ -75,7 +75,9 @@ The value box shows the **state** after the statement ran: the names it defines 
 ## Wires
 
 A wire connects two boxes. It leaves the **right** edge of one, runs down the side lanes, crosses the gap above the other and enters
-its **left** edge, so it never passes through a box. The small **pill** on a wire, in the gap above its target, says what it carries.
+its **left** edge, so it never passes through a box. Wires that go into (or out of) the same box travel together as a tight **bundle**, a few pixels apart, so a
+function called from ten places doesn't spread ten lines across the margin; every wire is still its own line, and hovering a box lights
+only its own wires. The small **pill** on a wire, in the gap above its target, says what it carries.
 There are three kinds:
 
 | Wire | Looks like | Meaning |

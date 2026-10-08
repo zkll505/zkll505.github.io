@@ -15,8 +15,9 @@
 const NodeMap = (() => {
   // Geometry in SVG pixels: HEAD = height of a box's header (kind label + code line), ROW = one line of the value box,
   // MINW = narrowest box, IND = indent of a nested box, SLOT = vertical room per incoming wire label above a box,
-  // LANE = distance between parallel wires in the gutters.
-  const HEAD = 36, ROW = 16, MINW = 320, IND = 16, SLOT = 18, LANE = 14; // SLOT = row per incoming wire label, LANE = gap between parallel wires
+  // LANE = distance between the side lanes of different boxes' wires, TIGHT = distance between the wires of one bundle (all the wires
+  // into the same box run together down a lane).
+  const HEAD = 36, ROW = 16, MINW = 320, IND = 16, SLOT = 18, LANE = 8, TIGHT = 3; // SLOT = row per incoming wire label
   const COLOR_DARK = { def: '#7aa2f7', class: '#bb9af7', for: '#ff9e64', while: '#ff9e64', if: '#e0af68', else: '#e0af68', with: '#e0af68',
                        try: '#f7768e', except: '#f7768e', return: '#9ece6a', import: '#73daca', assign: '#7dcfff', expr: '#c0caf5', other: '#7b86a8' };
   const COLOR_LIGHT = { def: '#2f5bd3', class: '#7b4fd1', for: '#d2610f', while: '#d2610f', if: '#a97800', else: '#a97800', with: '#a97800',
@@ -133,7 +134,8 @@ const NodeMap = (() => {
     const H = y + 28;
 
     // route each wire: out of the source's right edge (yo), down a right-hand lane, across the gap above the target (yg, where the
-    // label pill sits), down a left-hand lane and into the target's left edge (yi). Lanes are shared by wires that don't overlap.
+    // label pill sits), down a left-hand lane and into the target's left edge (yi). The horizontal rows keep their full spacing, but
+    // the vertical runs are packed: see bundle() below.
     // A wire from a box back to itself (a loop-carried value: `total = add(total, i)`) is just a short loop round that box, so it
     // takes no lane.
     const ws = wl.map(w => {
@@ -141,7 +143,34 @@ const NodeMap = (() => {
       const yo = a.y + HEAD / 2, yi = b.y + HEAD / 2, yg = b.y - 12 - SLOT * w.slot;
       return { w, a, b, self, yo, yi, yg, R: { lo: Math.min(yo, yg), hi: Math.max(yo, yg) }, L: { lo: Math.min(yg, yi), hi: Math.max(yg, yi) } };
     });
-    const gl = 24 + lanes(ws.filter(o => !o.self).map(o => o.L)) * LANE, gr = 24 + lanes(ws.filter(o => !o.self).map(o => o.R)) * LANE;
+    // Wires that belong together travel as a bundle: down the same lane TIGHT pixels apart instead of a lane each, so ten calls to
+    // reset() take a few pixels of gutter, not ten lanes. Bundles that don't overlap vertically share a lane.
+    //   left side:  the wires into one box (they share the last stretch down to it);
+    //   right side: the wires into one box (fan-in: a function called from many places) or out of one box (fan-out: a value made once
+    //               and used in many places), whichever there are more of, and only those running the same way (up or down).
+    // Inside a bundle the wires are ordered so that none has to cross another's horizontal row. bundle() sets .off (the distance
+    // from the map's edge, past the first 18 px) on each wire's R or L span and returns how wide the gutter has to be.
+    const live = ws.filter(o => !o.self), inDeg = new Map(), outDeg = new Map();
+    live.forEach(o => { inDeg.set(o.w.to, (inDeg.get(o.w.to) || 0) + 1); outDeg.set(o.w.from, (outDeg.get(o.w.from) || 0) + 1); });
+    const bundle = (side, keyOf, rank) => {
+      const groups = new Map();
+      live.forEach(o => {
+        const k = keyOf(o), g = groups.get(k) || { lo: Infinity, hi: -Infinity, members: [] };
+        g.lo = Math.min(g.lo, o[side].lo); g.hi = Math.max(g.hi, o[side].hi); g.members.push(o);
+        groups.set(k, g);
+      });
+      const list = [...groups.values()], width = Array(lanes(list)).fill(0), start = [];
+      list.forEach(g => { width[g.lane] = Math.max(width[g.lane], (g.members.length - 1) * TIGHT); });
+      let x = 0;
+      width.forEach((wd, i) => { start[i] = x; x += wd + LANE; });
+      list.forEach(g => g.members.sort((p, q) => rank(p) - rank(q)).forEach((o, k) => { o[side].off = start[g.lane] + k * TIGHT; }));
+      return x;
+    };
+    const down = o => o.yo < o.yg; // the right-hand run goes down (the caller is above its target)
+    const fanOut = o => outDeg.get(o.w.from) > inDeg.get(o.w.to);
+    const gl = 24 + bundle('L', o => o.w.to, o => o.w.slot);
+    const gr = 24 + bundle('R', o => (fanOut(o) ? 'from' + o.w.from : 'to' + o.w.to) + (down(o) ? 'v' : '^'),
+      o => (fanOut(o) ? Math.abs(o.yg - o.yo) : down(o) ? -o.w.slot : o.w.slot)); // (the nearest, or the lowest row, innermost)
     const WID = gl + W0 + gr;
 
     // the innermost visible box around a source line: where the "now" (stepping) and error highlights go
@@ -174,7 +203,7 @@ ${n.rows.length ? `<rect x="${x + 10}" y="${n.y + HEAD}" width="${n.w - 20}" hei
     }).join('');
 
     const wires = ws.map(({ w, a, b, self, yo, yi, yg, R, L }) => {
-      const xo = gl + a.x + a.w, xi = gl + b.x, xr = self ? xo + 12 : gl + W0 + 18 + R.lane * LANE, xl = self ? xi - 12 : gl - 18 - L.lane * LANE;
+      const xo = gl + a.x + a.w, xi = gl + b.x, xr = self ? xo + 12 : gl + W0 + 18 + R.off, xl = self ? xi - 12 : gl - 18 - L.off;
       const col = w.kind === 'call' ? CALL : hue(w.label, o.light), mid = gl + W0 / 2;
       const text = w.kind === 'call' ? w.label + (w.two ? ' ↔' : '') : (w.back ? '↻ ' : '') + w.label, pw = text.length * 5.9 + 12;
       return `<g class="wire ${w.kind}${w.back ? ' back' : ''}" data-a="${w.from}" data-b="${w.to}" data-l="${esc(w.label)}"><title>${esc(w.label)} (line ${a.line} → line ${b.line})</title>

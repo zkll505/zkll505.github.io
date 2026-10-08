@@ -117,7 +117,9 @@ it to that library's function instead of running it as `__main__`.
 
 `NodeMap.build` lays nodes out in one vertical column in source order; containers nest. A wire from a box back to itself (a loop-carried accumulator) is just a short loop round that box and takes no lane. Wires never cross a box: each leaves
 the source's right edge, runs down a gutter *lane*, crosses the gap above its target (where its label sits) and enters the
-target's left edge. Lanes are assigned by interval colouring so non-overlapping wires share one. All colours are CSS variables
+target's left edge. Wires that belong together (all the wires into one box; on the right side also all the wires out of one box, when there are more of
+those) form a *bundle*: they share a lane and run `TIGHT` pixels apart, ordered so none crosses another's row. Bundles are then assigned
+lanes by interval colouring, so bundles that don't overlap vertically share one. All colours are CSS variables
 on the `<svg>` (two palettes: dark/light), so the same markup serves the screen and the PNG export, which rasterises the SVG
 through a canvas. Collapsing a container hides its descendants and re-attaches their wires to it. Hover/cursor highlighting
 and search are done in `app.js` by toggling CSS classes on the existing SVG, without a redraw.
