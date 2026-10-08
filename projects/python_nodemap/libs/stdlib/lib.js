@@ -22,3 +22,7 @@ PyLibs.add({
   // after "p." when we don't know what p is (a Path): methods, and the attributes people reach for
   methods: 'read_text write_text read_bytes write_bytes exists is_file is_dir mkdir iterdir glob rglob unlink rmdir rename replace touch stat resolve absolute expanduser joinpath with_name with_suffix with_stem relative_to is_relative_to samefile cwd home stem suffix suffixes parent parents',
 });
+PyLibs.add({
+  name: 'typing',
+  members: 'Any Callable ClassVar Final Generic Literal Optional Protocol Tuple Type TypeVar Union List Dict Set FrozenSet Deque DefaultDict OrderedDict Counter ChainMap Iterable Iterator Generator Sequence MutableSequence Mapping MutableMapping AbstractSet Collection Container Hashable Sized Reversible Awaitable Coroutine AsyncIterator NamedTuple TypedDict NoReturn Never Self Annotated TypeAlias ParamSpec Concatenate TypeGuard NewType AnyStr Text IO TextIO BinaryIO LiteralString Required NotRequired Unpack TypeVarTuple cast overload final runtime_checkable get_type_hints get_args get_origin assert_type assert_never reveal_type no_type_check TYPE_CHECKING',
+});

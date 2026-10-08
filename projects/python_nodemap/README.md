@@ -31,7 +31,7 @@ your browser's `localStorage`.
 - **Projects**: export a zip of every `.py` plus a PNG of each map, import a zip, or share the whole project as a link.
 - **Locked files**: a `# pynodemap lock <password>` line makes a file unopenable without the password, so an assignment can carry
   tests the student can run (the **Tests** button, or `import`) but not read. See [docs/LOCKED_FILES.md](docs/LOCKED_FILES.md).
-- **Libraries** (each one is a plug-in, see below): `random`, `math`, `time`, `enum`, `pathlib`, `doctest`, `unittest`,
+- **Libraries** (each one is a plug-in, see below): `random`, `math`, `time`, `enum`, `pathlib`, `typing`, `doctest`, `unittest`,
   `tkinter` (GUI windows) and `turtle`.
 
 ## Run it
@@ -104,7 +104,7 @@ Only these can be imported (plus the project's own files); anything else raises 
 
 | Library                          | What you get                                                                                                                                                                                                                                |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `random`, `math`, `time`, `enum`, `pathlib` | The standard modules (autocomplete included). `pathlib` and `open()` work on a temporary folder that is deleted when the run ends.                                                                                                                                                                                               |
+| `random`, `math`, `time`, `enum`, `pathlib`, `typing` | The standard modules (autocomplete included). `pathlib` and `open()` work on a temporary folder that is deleted when the run ends.                                                                                                                                                                                               |
 | `doctest`                        | The module, plus a **Doctest** button that runs the active file's `>>>` examples.                                                                                                                                                           |
 | `unittest`                       | The module, plus a **Tests** button; the report is shown in the console in normal colour.                                                                                                                                                   |
 | `tkinter`                        | A look-alike of real tkinter drawn as floating windows: the common widgets, `pack`/`grid`/`place`, variables, `bind`, `after`, `Canvas`, menus, `messagebox`, `ttk` basics. See its limits in [`libs/tkinter/lib.py`](libs/tkinter/lib.py). |

@@ -669,6 +669,33 @@ def locked_files():
     assert (r["error"]["file"], r["error"]["line"]) == ("main.py", 2) and "ValueError: hidden" in r["error"]["msg"], r["error"]  # blamed on the student's line
 
 
+TYPED = '''from typing import Dict, List, NamedTuple, Optional, TypeVar
+
+T = TypeVar("T")
+
+
+class Point(NamedTuple):
+    x: int
+    y: int
+
+
+def first(items: List[T]) -> Optional[T]:
+    return items[0] if items else None
+
+
+print(first([3, 4]), first([]), Point(1, 2), List[int], Dict[str, int])
+'''
+
+
+def typing_module():
+    """`typing` is importable (annotations, NamedTuple, generics) and the analysis copes with annotated code."""
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        r = json.loads(runner.run(json.dumps({"t.py": TYPED}), "t.py"))
+    assert o.getvalue() == "3 None Point(x=1, y=2) typing.List[int] typing.Dict[str, int]\n" and r["error"] is None, (o.getvalue(), r["error"])
+    g = json.loads(runner.analyze(TYPED))
+    assert g["hints"] == [] and "error" not in g, g
+
+
 if __name__ == "__main__":
     runner.LIMIT = 20_000  # a smaller cutoff keeps the infinite-loop checks fast
     analyze()
@@ -685,5 +712,6 @@ if __name__ == "__main__":
     pathlib_and_teleport()
     window_events()
     locked_files()
+    typing_module()
     enum_and_unittest()
     print("ok")

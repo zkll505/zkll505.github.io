@@ -21,6 +21,7 @@ calls `analyze()`, `run()` and the GUI hooks directly (the calls `worker.js` mak
 | `tkinter_app`, `tkinter_widgets`, `tkinter_classes`, `tkinter_star_import` | The tkinter library: widget tree, events, callbacks, subclassing, `from tkinter import *`, windows that stay open |
 | `turtle_lib` | Turtle drawing as canvas items, colours and fill, key / click / timer events, animation frames, two runs in a row (no stale window) |
 | `example_library` | `docs/examples/clicker`, the library the guide walks through |
+| `typing_module` | `typing` imports and works with annotated code |
 | `pathlib_and_teleport` | `pathlib` on the run's temporary folder; `turtle.teleport` |
 | `window_events` | Events reaching a running loop through the mailbox, a window closed mid-run ending the script, `update()` as a heartbeat for the loop cutoff |
 | `locked_files` | Locked files: still importable, run by the **Tests** button, but no file on disk, no source lines in tracebacks, not traced |
