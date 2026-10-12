@@ -11,6 +11,7 @@ Put one comment line in the file:
 # pynodemap lock my_password
 ```
 
+- Only `.py` files can be locked (a `.txt` is not an importable module, so there is nothing to hide it behind).
 - It can be anywhere in the file; the top is the usual place. Spacing and case don't matter (`#pynodemap  LOCK ...` works).
 - The **password is the rest of the line** (spaces inside it are kept, the ends are trimmed). Passwords are case-sensitive.
 - A lock with **no password** (`# pynodemap lock` on its own) seals the file: nobody can open it in the tool. Edit it elsewhere.

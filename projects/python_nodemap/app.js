@@ -85,6 +85,7 @@ Object.assign(S, {
   tl: null,    // step timeline of the last run; step = null means "finished" (the final values)
   step: null, views: null,
   error: null, // {file, line, msg} of the last run
+  cover: null, // {file: [lines that never ran]} of the last Coverage run
   graph: {}, key: {}, err: {}, hints: {}, fold: {}, // per-file analysis results (key = what they were computed from)
 });
 // P = preferences (saved): theme, editor font size, map zoom (a number or 'fit'), the wire filters (data / calls / loops = back) and
@@ -97,19 +98,22 @@ let timer;
 const later = (f, ms) => { clearTimeout(timer); timer = setTimeout(f, ms); };
 const setStatus = t => { $('#st').textContent = t; };
 // the project's module names (file names without .py): they can import each other, so analysis must know them
-const modsOf = () => Object.keys(S.files).map(f => f.slice(0, -3)).sort();
-const okName = n => /^[A-Za-z_]\w*\.py$/.test(n);
+// A project holds .py files (modules: they can import each other) and .txt files (plain text: a doctest file like test_klondike.txt,
+// or data for open()). Only the .py files are analysed, drawn on the map and imported.
+const isPy = n => n.endsWith('.py');
+const modsOf = () => Object.keys(S.files).filter(isPy).map(f => f.slice(0, -3)).sort();
+const okName = n => /^[A-Za-z_]\w*\.py$/.test(n) || /^[\w-]+\.txt$/.test(n);
 
 // ---- locked files. A line `# pynodemap lock <password>` in a file makes it unopenable: the explorer shows it with a 🔒, and clicking it
 // asks for the password. A locked file still runs (import it, or press Tests) but its source stays hidden, and Export and Share leave
 // it out. This is a soft lock for the classroom, not security: docs/LOCKED_FILES.md says what it does and doesn't protect.
 const LOCK = /^[ \t]*#[ \t]*pynodemap[ \t]+lock\b[ \t]*(.*?)[ \t]*$/im;
 S.unlocked = new Set(); // locked files whose password was entered during this session (never saved)
-const lockOf = n => { const m = LOCK.exec(S.files[n] ?? ''); return m ? m[1] : null; }; // its password ('' = none: sealed), or null if it isn't locked
+const lockOf = n => { const m = isPy(n) ? LOCK.exec(S.files[n] ?? '') : null; return m ? m[1] : null; }; // its password ('' = none: sealed), or null if it isn't locked
 const isLocked = n => lockOf(n) !== null && !S.unlocked.has(n);
 const firstOpenable = skip => Object.keys(S.files).sort().find(n => n !== skip && !isLocked(n));
 // the files as autocomplete may see them: a locked file's names stay secret
-const visibleFiles = () => Object.fromEntries(Object.entries(S.files).map(([n, s]) => [n, isLocked(n) ? '' : s]));
+const visibleFiles = () => Object.fromEntries(Object.entries(S.files).filter(([n]) => isPy(n)).map(([n, s]) => [n, isLocked(n) ? '' : s]));
 // a saved project must never open a locked file by itself, as the active file or in a tab
 S.open = S.open.filter(n => n in S.files && !isLocked(n));
 if (isLocked(S.active)) {
@@ -176,9 +180,73 @@ const W = {
 // ---- console. A re-run (after input) re-sends output we already showed, so only the new part is displayed:
 // `seen` = characters received during this attempt, `shown` = the most characters of any attempt, already on screen.
 let seen = 0, shown = 0;
-function out(text, cls = '') { // append text to the console; `File "x.py", line 3` in a traceback becomes a link to that line
+// A program's output may hold ANSI codes, as a text game does: colours (\x1b[31m) become styles, "clear screen" (\x1b[2J) empties the
+// console, and any other code is dropped. `sgr` is the colour / bold in force; it carries over from one piece of output to the next.
+const PAL = ['#000', '#cd3131', '#0dbc79', '#e5e510', '#2472c8', '#bc3fbc', '#11a8cd', '#e5e5e5', '#666', '#f14c4c', '#23d18b', '#f5f543', '#3b8eea', '#d670d6', '#29b8db', '#fff'];
+const ANSI = /\x1b\[([?\d;]*)([A-Za-z])/g;
+let sgr = {};
+function setSgr(params) { // \x1b[...m: 0 reset, 1 bold, 22 not bold, 30-37 / 90-97 colour, 40-47 / 100-107 background, 39 / 49 default
+  const c = params === '' ? [0] : params.split(';').map(Number);
+  for (let i = 0; i < c.length; i++) {
+    const n = c[i];
+    if (n === 0) sgr = {};
+    else if (n === 1) sgr.b = true;
+    else if (n === 22) delete sgr.b;
+    else if (n === 39) delete sgr.fg;
+    else if (n === 49) delete sgr.bg;
+    else if ((n >= 30 && n <= 37) || (n >= 90 && n <= 97)) sgr.fg = PAL[n < 90 ? n - 30 : n - 82];
+    else if ((n >= 40 && n <= 47) || (n >= 100 && n <= 107)) sgr.bg = PAL[n < 100 ? n - 40 : n - 92];
+    else if (n === 38 || n === 48) i += c[i + 1] === 5 ? 2 : 4; // 256 / true colour: not supported, skip its arguments
+  }
+}
+const sgrStyle = () => (sgr.fg ? `color:${sgr.fg};` : '') + (sgr.bg ? `background:${sgr.bg};` : '') + (sgr.b ? 'font-weight:bold;' : '');
+// Console output is queued and written about every 30 ms, so a program that prints thousands of lines a second costs the page one
+// scroll (and one layout) per tick instead of one per line (the worker already sends it in batches).
+let queued = [], outTimer = 0;
+function out(text, cls = '') {
+  queued.push([text, cls]);
+  outTimer ||= setTimeout(drainOut, 30);
+}
+function drainOut() {
+  clearTimeout(outTimer);
+  outTimer = 0;
+  const q = queued;
+  queued = [];
+  q.forEach(([text, cls]) => writeOut(text, cls));
+  $('#out').scrollTop = 1e9;
+}
+function writeOut(text, cls) { // append text to the console. Program output (cls '') is read for ANSI codes; messages and errors are plain
+  if (cls) return put(text, cls, '');
+  let at = 0;
+  for (const m of text.matchAll(ANSI)) {
+    put(text.slice(at, m.index), '', sgrStyle());
+    at = m.index + m[0].length;
+    if (m[2] === 'm') setSgr(m[1]);
+    else if (m[2] === 'J' && (m[1] === '2' || m[1] === '3')) clearOut();
+  }
+  put(text.slice(at), '', sgrStyle());
+}
+// The console only ever keeps the newest MAXOUT characters. Nearing that, the oldest output is dropped (down to KEEPOUT, so it isn't
+// redone on every line) and a note at the top says so; a program can print as much as it likes without being stopped or slowing the page.
+const MAXOUT = 200000, KEEPOUT = 150000;
+let outChars = 0; // characters on the console now (not counting the note)
+const clearOut = () => { $('#out').textContent = ''; outChars = 0; queued = []; };
+function trimOut() {
+  const box = $('#out');
+  let note = box.querySelector(':scope > #cut');
+  if (!note) { note = Object.assign(document.createElement('span'), { id: 'cut', className: 'dim', textContent: '[earlier output cleared]\n' }); box.prepend(note); }
+  while (outChars > KEEPOUT && note.nextSibling?.nextSibling) { // (the newest piece always stays)
+    outChars -= note.nextSibling.textContent.length;
+    note.nextSibling.remove();
+  }
+  const only = note.nextSibling; // one huge piece of text (a print of millions of characters): keep its end
+  if (outChars > KEEPOUT && only?.childNodes.length === 1 && only.firstChild.nodeType === 3) { only.firstChild.data = only.firstChild.data.slice(-KEEPOUT); outChars = KEEPOUT; }
+}
+function put(text, cls, style) { // one span of console text; `File "x.py", line 3` in a traceback becomes a link to that line
+  if (!text) return;
   const span = document.createElement('span');
   span.className = cls;
+  if (style) span.style.cssText = style;
   text.split(/(File "[^"]+", line \d+)/).forEach((p, i) => {
     if (i % 2 === 0) return span.append(p);
     const [, f, l] = /File "([^"]+)", line (\d+)/.exec(p);
@@ -188,7 +256,8 @@ function out(text, cls = '') { // append text to the console; `File "x.py", line
     span.append(a);
   });
   $('#out').append(span);
-  $('#out').scrollTop = 1e9;
+  outChars += text.length;
+  if (outChars > MAXOUT) trimOut();
 }
 W.onOut = (text, cls) => {
   const from = Math.max(0, shown - seen);
@@ -200,7 +269,7 @@ $('#out').onclick = e => {
   const a = e.target.closest('a');
   if (a && S.files[a.dataset.file] && !isLocked(a.dataset.file)) { openFile(a.dataset.file); gotoLine(+a.dataset.line); }
 };
-$('#clear').onclick = () => { $('#out').textContent = ''; };
+$('#clear').onclick = clearOut;
 
 // ---- editor
 const complete = c => c.showHint({ hint: cc => PyComplete.hint(cc, visibleFiles()), completeSingle: false });
@@ -213,13 +282,13 @@ const cm = CodeMirror($('#cm'), {
     'Ctrl-Space': complete, 'Ctrl-F': 'findPersistent', 'Ctrl-H': 'replace', F3: 'findNext', 'Shift-F3': 'findPrev',
   },
 });
-const docOf = n => (docs[n] ||= CodeMirror.Doc(S.files[n], 'python'));
+const docOf = n => (docs[n] ||= CodeMirror.Doc(S.files[n], isPy(n) ? 'python' : null));
 cm.on('change', () => { // every edit: store it, drop the results of the last run (they no longer match), re-analyse shortly
   S.files[S.active] = cm.getValue();
   const tagged = lockOf(S.active) !== null; // typing (or deleting) the lock tag in the open file: it stays open until the page is reloaded
   if (tagged !== S.unlocked.has(S.active)) { if (tagged) S.unlocked.add(S.active); else S.unlocked.delete(S.active); chrome(); }
   delete S.trace[S.active];
-  S.tl = null; S.step = null; S.error = null; // the recorded run no longer matches the code
+  S.tl = null; S.step = null; S.error = null; S.cover = null; // the recorded run no longer matches the code
   stopPlay(); showMarks(); updateStepper();
   save();
   later(refresh, 350);
@@ -254,8 +323,11 @@ function markLine(k, line, cls) {
   if (line < 1 || line > cm.lineCount()) return null;
   return (slot[k] = { doc: cm.getDoc(), h: cm.addLineClass(line - 1, 'background', cls), cls });
 }
+let coverMarks = []; // the editor lines a Coverage run says never ran (shaded)
 function showMarks() {
   clearSlot('now'); clearSlot('err');
+  coverMarks.forEach(m => m.doc.removeLineClass(m.h, 'background', 'cm-miss'));
+  coverMarks = (S.cover?.[S.active] || []).filter(l => l <= cm.lineCount()).map(l => ({ doc: cm.getDoc(), h: cm.addLineClass(l - 1, 'background', 'cm-miss') }));
   const [f, l] = nowAt();
   if (f === S.active && l) { markLine('now', l, 'cm-now'); cm.scrollIntoView({ line: l - 1, ch: 0 }, 90); }
   const e = S.error;
@@ -341,11 +413,11 @@ function closeTab(n) {
   if (!S.open.length) S.open = [firstOpenable(n) || n];
   openFile(S.active === n || !S.open.includes(S.active) ? S.open[0] : S.active);
 }
-function askName(msg, def) { // ask for a file name; it must be importable (letters, digits, _), so `import name` works
+function askName(msg, def) { // ask for a file name: name.py (letters, digits, _ so `import name` works) or name.txt
   let n = (prompt(msg, def) || '').trim();
   if (!n) return null;
-  if (!n.endsWith('.py')) n += '.py';
-  if (!okName(n)) { alert('Use letters, digits and _ only (so it can be imported), e.g. my_module.py'); return null; }
+  if (!/\.(py|txt)$/.test(n)) n += '.py';
+  if (!okName(n)) { alert('Use letters, digits and _ only (so it can be imported), e.g. my_module.py, or a text file such as tests.txt'); return null; }
   return n;
 }
 function newFile() {
@@ -359,14 +431,14 @@ function renameFile(old) {
   const n = askName('Rename to:', old);
   if (!n || n === old) return;
   if (n in S.files) return alert(n + ' already exists.');
-  const src = S.files[old], doc = docs[old];
+  const src = S.files[old], doc = isPy(old) === isPy(n) ? docs[old] : null; // (.py <-> .txt changes the highlighting: it gets a fresh document)
   forget(old);
   S.files[n] = src;
   if (S.unlocked.delete(old)) S.unlocked.add(n); // a renamed file stays unlocked
   if (doc) docs[n] = doc;
   S.open = S.open.map(x => (x === old ? n : x));
-  if (S.active === old) S.active = n;
-  S.tl = null; S.step = null; S.error = null;
+  if (S.active === old) { S.active = n; cm.swapDoc(docOf(n)); }
+  S.tl = null; S.step = null; S.error = null; S.cover = null;
   chrome(); save(); showMarks(); updateStepper(); refresh();
 }
 function deleteFile(n) {
@@ -376,7 +448,7 @@ function deleteFile(n) {
   forget(n);
   S.open = S.open.filter(x => x !== n);
   if (!S.open.length) S.open = [firstOpenable()];
-  S.tl = null; S.step = null; S.error = null;
+  S.tl = null; S.step = null; S.error = null; S.cover = null;
   openFile(S.active === n ? S.open[0] : S.active);
 }
 $('#new').onclick = newFile;
@@ -392,6 +464,7 @@ let act = null, hov = null; // node under the cursor / under the mouse
 // S.key[file] = what the cached S.graph[file] was computed from. Stale answers (the file changed while we waited) are dropped.
 async function refresh() {
   const n = S.active, src = S.files[n], key = src + '\0' + modsOf();
+  if (!isPy(n)) { $('#maperr').textContent = ''; draw(); showHints(); return; } // a text file: nothing to analyse
   if (S.key[n] !== key) {
     let g;
     try { g = JSON.parse(await W.call('analyze', { src, mods: modsOf() })); } catch { return; }
@@ -420,7 +493,7 @@ const nowAt = () => (S.step == null || !S.tl ? [] : [S.tl.files[S.tl.steps[2 * S
 function draw() { // rebuild the SVG for the active file (graph + trace + folding + theme) and re-apply zoom and highlights
   if (!ready) return; // the loading panel is showing
   const g = S.graph[S.active], box = $('#map');
-  if (!g) { box.innerHTML = '<div class="empty">Nothing to map yet.</div>'; S.dim = null; return; }
+  if (!g) { box.innerHTML = `<div class="empty">${isPy(S.active) ? 'Nothing to map yet.' : 'A text file has no node map.'}</div>`; S.dim = null; return; }
   const [nf, nl] = nowAt();
   const b = NodeMap.build(g, traceOf(S.active), {
     fold: new Set(S.fold[S.active]),
@@ -579,19 +652,20 @@ $('#s-play').onclick = () => {
 // job = the run in progress: its files (a snapshot), main file, mode, the input() answers so far and the random seed
 let job = null;
 const setRunning = on => { document.querySelectorAll('#run, .runmode').forEach(b => { b.disabled = on || !ready; }); $('#stop').hidden = !on; };
-async function run(mode = 'run') { // mode = 'run', or the id of a mode a library added (doctest, unittest ...)
+async function run(mode = 'run', cover = false) { // mode = 'run', or the id of a mode a library added (doctest, unittest ...); cover = report the lines that never ran
   if (job || !ready) return;
+  if (!isPy(S.active) && mode === 'run') mode = PyLibs.modes().find(m => m.id === 'doctest')?.id || mode; // a text file has nothing to execute: Run runs its >>> examples
   stopPlay();
-  S.tl = null; S.step = null; S.error = null;
+  S.tl = null; S.step = null; S.error = null; S.cover = null;
   showMarks(); updateStepper(); draw();
   PyLibs.closeViews();
   const sw = navigator.serviceWorker?.controller;
   if (sw) PyLibs.views().forEach(l => sw.postMessage({ lib: l.name, clear: true })); // nothing left over from the last run
-  job = { files: { ...S.files }, main: S.active, mode, answers: [], seed: Math.floor(Math.random() * 2 ** 31), locked: Object.keys(S.files).filter(isLocked) };
+  job = { files: { ...S.files }, main: S.active, mode, cover, answers: [], seed: Math.floor(Math.random() * 2 ** 31), locked: Object.keys(S.files).filter(isLocked) };
   S.ranFiles = { ...S.files };
-  $('#out').textContent = '';
-  shown = 0;
-  out(`▶ ${mode === 'run' ? '' : mode + ' '}${S.active}\n`, 'dim');
+  clearOut();
+  shown = 0; sgr = {};
+  out(`▶ ${cover ? 'coverage ' : ''}${mode === 'run' ? '' : mode + ' '}${S.active}\n`, 'dim');
   attempt();
 }
 async function attempt() { // one execution of the job; asks for more input and returns early when input() has no answer yet
@@ -621,11 +695,14 @@ async function attempt() { // one execution of the job; asks for more input and 
   finish(res, t0);
 }
 function finish(res, t0) { // a run ended: store its results, show the final values, jump to the file with the error if any
+  const cover = job?.cover;
   job = null;
   setRunning(false);
   setStatus('Ready');
   if (res) { S.trace = res.files; S.tl = res.timeline; S.step = null; S.views = null; S.error = res.error; }
+  if (cover && res?.cover) { S.cover = res.cover.files; out('\n' + res.cover.report + '\n'); }
   out(`\n[${res?.gui ? 'script finished, window still open (close it or press Run to end it)' : 'finished'} in ${Math.round(performance.now() - t0)} ms]\n`, 'dim');
+  drainOut(); // a run has ended: whatever it printed is on the console now, not up to 30 ms later
   const e = S.error;
   if (e && e.file !== S.active && S.files[e.file]) openFile(e.file); else { draw(); showMarks(); updateStepper(); }
   if (e && e.file === S.active) cm.scrollIntoView({ line: e.line - 1, ch: 0 }, 120);
@@ -643,11 +720,13 @@ function stop() { // kill the worker (the only way to interrupt Python), close a
   PyLibs.closeViews();
   W.restart();
   out('\n■ stopped\n', 'dim');
+  drainOut();
   setRunning(false);
   setStatus('Restarting Python…');
   W.ready.then(() => { setStatus('Ready'); refresh(); });
 }
 $('#run').onclick = () => run();
+$('#cov').onclick = () => run('run', true);
 for (const m of PyLibs.modes()) { // the extra run buttons that libraries add (Doctest, Tests ...)
   const b = Object.assign(document.createElement('button'), { className: 'pri runmode', textContent: m.label, title: m.title, disabled: true });
   b.onclick = () => run(m.id);
@@ -685,15 +764,17 @@ const download = (blob, name) => {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1e4);
 };
-const safeName = p => {
-  const n = p.split(/[\\/]/).pop().replace(/\.py$/i, '').replace(/\W/g, '_') || 'file';
-  return (/^\d/.test(n) ? '_' : '') + n + '.py';
+const isFile = n => /\.(py|txt)$/i.test(n); // the kinds of file a project holds
+const safeName = p => { // a file name from a path: spaces and odd characters become _, a .py can't start with a digit
+  const base = p.split(/[\\/]/).pop(), txt = /\.txt$/i.test(base);
+  const n = base.replace(/\.(py|txt)$/i, '').replace(txt ? /[^\w-]/g : /\W/g, '_') || 'file';
+  return txt ? n + '.txt' : (/^\d/.test(n) ? '_' : '') + n + '.py';
 };
-function mergeFiles(got) { // loose .py files: adds / overwrites the given files, keeps the rest
+function mergeFiles(got) { // loose .py / .txt files: adds / overwrites the given files, keeps the rest
   const names = Object.keys(got);
   names.forEach(n => { S.files[n] = got[n]; docs[n]?.setValue(got[n]); delete S.trace[n]; });
-  S.tl = null; S.step = null; S.error = null;
-  openFile(names[0]);
+  S.tl = null; S.step = null; S.error = null; S.cover = null;
+  openFile(names.find(isPy) ?? names[0]);
 }
 function replaceProject(got) { // a zip or a share link is a whole project: everything already in the explorer is removed
   if (job) stop();
@@ -703,14 +784,14 @@ function replaceProject(got) { // a zip or a share link is a whole project: ever
   W.w.postMessage({ type: 'guireset' }); // a window left open by the old project would keep running
   S.files = { ...got };
   for (const n of Object.keys(docs)) delete docs[n];
-  Object.assign(S, { trace: {}, graph: {}, key: {}, err: {}, hints: {}, fold: {}, tl: null, step: null, views: null, error: null, ranFiles: null });
+  Object.assign(S, { trace: {}, graph: {}, key: {}, err: {}, hints: {}, fold: {}, tl: null, step: null, views: null, error: null, cover: null, ranFiles: null });
   S.unlocked = new Set(); // a different project: its locked files are locked again
-  let first = [...(names.includes('main.py') ? ['main.py'] : []), ...names].find(n => !isLocked(n));
+  let first = [...(names.includes('main.py') ? ['main.py'] : []), ...names.filter(isPy), ...names].find(n => !isLocked(n));
   if (!first) { S.files['untitled.py'] = ''; first = 'untitled.py'; } // nothing but locked files
   S.open = [first];
   openFile(first);
 }
-async function importFiles(list) { // .py files are merged in; a .zip replaces the whole project (after a confirmation)
+async function importFiles(list) { // .py / .txt files are merged in; a .zip replaces the whole project (after a confirmation)
   const got = {};
   let zipped = false;
   for (const f of list) {
@@ -718,12 +799,12 @@ async function importFiles(list) { // .py files are merged in; a .zip replaces t
       zipped = true;
       const z = await JSZip.loadAsync(f);
       for (const e of Object.values(z.files)) {
-        if (!e.dir && /\.py$/i.test(e.name) && !/(^|\/)__MACOSX\//.test(e.name)) got[safeName(e.name)] = await e.async('string');
+        if (!e.dir && isFile(e.name) && !/(^|\/)__MACOSX\//.test(e.name)) got[safeName(e.name)] = await e.async('string');
       }
-    } else if (/\.py$/i.test(f.name)) got[safeName(f.name)] = await f.text();
+    } else if (isFile(f.name)) got[safeName(f.name)] = await f.text();
   }
   const names = Object.keys(got);
-  if (!names.length) return alert('No .py files found.');
+  if (!names.length) return alert('No .py or .txt files found.');
   if (zipped) {
     const lost = Object.keys(S.files).filter(n => S.files[n] !== got[n]); // current files that will disappear or change
     const shown = lost.slice(0, 6).join(', ') + (lost.length > 6 ? ', …' : '');
@@ -738,12 +819,13 @@ async function importFiles(list) { // .py files are merged in; a .zip replaces t
 }
 $('#imp').onclick = () => $('#pick').click();
 $('#pick').onchange = async e => { await importFiles([...e.target.files]); e.target.value = ''; };
-$('#exp').onclick = async () => { // a zip with every .py and, for each, a PNG of its node map (with the values of the last run)
+$('#exp').onclick = async () => { // a zip with every file and, for each .py, a PNG of its node map (with the values of the last run)
   setStatus('Exporting…');
   const zip = new JSZip(), left = [];
   for (const [name, src] of Object.entries(S.files)) {
     if (isLocked(name)) { left.push(name); continue; } // a locked file is not handed out
     zip.file(name, src);
+    if (!isPy(name)) continue;
     try {
       const g = JSON.parse(await W.call('analyze', { src, mods: modsOf() }));
       if (!g.error) zip.file(name.replace(/\.py$/, '') + '_nodemap.png', await NodeMap.png(g, S.trace[name], { light: P.light }));

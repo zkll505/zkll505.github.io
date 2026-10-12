@@ -187,13 +187,46 @@ have no line to quote. They are left out of `info`, so they are never traced: no
 asks for their names (`_locked()`) and runs their tests too. The lock is a deterrent, not security (the text is in the browser and in
 every share link), and the docs say so.
 
+## Text files and the console
+
+A project holds `.py` and `.txt` files (`isPy`, `okName` and `safeName` in `app.js` decide what a name may be: a `.txt` is `[\w-]+`, it
+can't be imported so it needs no more). Only `.py` files are analysed, drawn, traced, locked (a lock line in a `.txt` is just text),
+offered to autocomplete or counted in `modsOf()`. `run()` writes every file to the temp folder, so `open()` and a program's own
+`doctest.testfile("test_klondike.txt")` find a text file next to the module, but it `continue`s before analysing a non-`.py`. When the
+active file is a `.txt` it isn't executed: the page turns Run into the doctest mode (if that library is there), and the doctest
+library runs `testfile` on `mod.__file__`.
+
+`out()` reads a program's output (not the `err` / `dim` messages) for ANSI codes: `\x1b[...m` colours and bold become inline styles
+(`setSgr`; 16 colours, no 256-colour or true colour) and `\x1b[2J` empties the console, so a game that clears the screen before it
+redraws shows one board. Other codes are dropped. The style in force (`sgr`) carries over between pieces of output, and a re-run after
+`input()` only receives the output that is new, so a clear in the part already shown is not repeated.
+
+## Coverage
+
+`run()` always returns `cover` (`cover_of()` in `runner.py`): for each traced file that ran, which of its statements never did, and the
+text of the report. `statements(src)` lists the statements the way Coverage.py counts them, from the `ast`: the first line of every
+statement and `except` clause, minus docstrings, `global` / `nonlocal`, and anything marked `# pragma: no cover` (on a compound
+statement that includes its body). Each is a `[first, last]` span: a statement counts as run when any traced line from first to last
+(hits are the same line events the node map uses) is in `hits`, so a multi-line statement doesn't depend on which of its lines fired
+first and a compound statement is judged by its header alone. `cover_report()` formats the table (Coverage.py's rounding: only a
+file that is really complete shows 100%, only one that never ran shows 0%; consecutive missed statements become a range).
+
+The page only asks for it: the **Coverage** button calls `run('run', true)`, `finish()` prints `cover.report` and keeps
+`S.cover = {file: [missed lines]}`, and `showMarks()` shades those lines of the active file (`cm-miss`). Any edit, rename, delete or
+new run drops `S.cover`. It is line coverage only. Files that never ran are left out of the report, as with Coverage.py without
+`--source`, and locked files are untraced so they never appear.
+
+Two things in `run()` make a finished test file behave as it would under plain Python. `input()` reads `sys.stdin` when the program has
+replaced it (the real `input()` does), and `leave()` restores `sys.stdin` and every attribute of `builtins` that the program changed,
+so a test that sets `builtins.input = ...` can't break the next run.
+
 ## Limits at a glance
 
 | Limit | Where | Why |
 | --- | --- | --- |
 | 1.5 million traced lines | `LIMIT` in `runner.py` | Stops what is probably an infinite loop (the message says so). |
 | 30,000 recorded steps / 120,000 value facts | `MAXSTEPS`, `MAXFACTS` | Bounds the memory of the step timeline; the run itself continues, only the replay is cut (`trunc`). |
-| 400,000 characters of output | `OUTLIM` | A runaway `print` loop would freeze the console. |
+| Newest 200,000 characters on the console | `MAXOUT` / `KEEPOUT` in `app.js` | Printing is never an error. Nearing the limit, `trimOut()` drops the oldest pieces (down to `KEEPOUT`) and leaves a note at the top, so a runaway `print` loop can't make the page slow or run out of memory (the worker already sends output in batches); the executed-line cap is what ends such a loop. A clear screen (`\x1b[2J`) empties the console like in a terminal. |
 | 50 files, 500,000 characters each | `loadShared()` in `app.js` | Validates a share link before it replaces your project. |
 | Pyodide 0.29.x | `PYODIDE` in `app.js` | Newer versions need module workers (see Start-up). |
 
@@ -202,7 +235,7 @@ every share link), and the docs say so.
 `localStorage`: `python_nodemap.v1` (files, open tabs, active file) and `python_nodemap.prefs` (theme, font size, zoom, wire
 filters). A share link is `#p=` plus the project as JSON, deflated (`CompressionStream`, falling back to uncompressed) and
 base64url-encoded; it lives in the URL fragment, so it is never sent to a server. Opening one asks for confirmation and
-**replaces** the whole project, as does importing a zip; importing loose `.py` files only adds them.
+**replaces** the whole project, as does importing a zip; importing loose `.py` / `.txt` files only adds them.
 
 ## Browser differences we hit
 

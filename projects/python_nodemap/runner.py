@@ -21,8 +21,9 @@ Data shapes (plain JSON, handed to nodemap.js / app.js unchanged):
         kind "data": a value flows from node `from` to node `to` (label = the variable name; back = it comes from a later line
         of the same loop). kind "call": `to` is the function/class/method called (label = the call text; two = it returns a value).
   hint  {line, msg, kind}   kind is "warn" or "error"; the editor draws these as squiggles.
-  run   {files, error, need_input, gui, timeline}
+  run   {files, error, need_input, gui, timeline, cover}
         files[name] = {vals, hits, calls, rets, params}, each keyed by line number (the aggregate shown when the run is finished).
+        cover = {files: {name: [lines that never ran]}, report: the text `coverage report -m` would print} (see statements())
         timeline = {files, steps, facts, trunc}: steps = [file index, line, file index, line, ...] for every executed line;
         facts = [[step, file index, "v"|"p"|"r", line, data], ...], values that became known right before step number `step`
         (v = variable values after a line, p = parameters at a call, r = a return value). NodeMap.viewAt() replays them.
@@ -37,7 +38,8 @@ bar never show them. See Hidden inside run().
 
 How tracing works: a "line" event fires BEFORE the line runs, so what a statement produced is snapshotted at the next line
 event of the same frame (or at its "return"). That is why `last` remembers the previous line of each frame.
-Safety limits (constants below): LIMIT traced lines (assumed infinite loop), MAXSTEPS / MAXFACTS timeline entries, OUTLIM output.
+Safety limits (constants below): LIMIT traced lines (assumed infinite loop), MAXSTEPS / MAXFACTS timeline entries. Output isn't capped
+here: the page's console keeps only the newest part of it (MAXOUT in app.js).
 """
 import ast, builtins, importlib, importlib.util, json, os, random, re, shutil, sys, tempfile, traceback, types
 
@@ -56,7 +58,6 @@ SHADOW = {"list", "dict", "set", "str", "int", "float", "sum", "max", "min", "le
           "abs", "round", "all", "any", "map", "filter", "zip", "open", "next", "iter", "format", "tuple", "bool", "object", "chr", "ord"}
 LIMIT = 1_500_000  # traced lines before we assume an infinite loop
 MAXSTEPS, MAXFACTS = 30_000, 120_000  # timeline size caps
-OUTLIM = 400_000  # characters of output
 FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
 # statement type -> node kind. Assign / AugAssign / AnnAssign become "assign"; anything not listed here becomes "other".
 KIND = {ast.FunctionDef: "def", ast.AsyncFunctionDef: "def", ast.ClassDef: "class", ast.For: "for", ast.AsyncFor: "for",
@@ -354,12 +355,8 @@ def analyze(src, mods_json="[]"):
 
 # ---------------------------------------------------------------- running
 
-# The three exceptions below derive from BaseException so a student's `except Exception:` cannot swallow them.
+# The two exceptions below derive from BaseException so a student's `except Exception:` cannot swallow them.
 class StepLimit(BaseException):  # too many traced lines: probably an infinite loop
-    pass
-
-
-class OutputLimit(BaseException):  # more than OUTLIM characters printed
     pass
 
 
@@ -463,6 +460,70 @@ def gui_cleanup():
         _LIVE.clear()
 
 
+PRAGMA = re.compile(r"#\s*pragma:?\s*no\s*cover", re.I)
+
+
+def statements(src):
+    """The statements Coverage.py would count in src, as [first line, last line] pairs. A statement counts as run when any line from
+    first to last ran: every line of a simple statement, only the header of a compound one. Left out: docstrings (and any other bare
+    string), `global`, and anything marked `# pragma: no cover` (on a compound statement that takes its whole body with it)."""
+    tree, lines = ast.parse(src), src.splitlines()
+    nodes = [n for n in ast.walk(tree) if isinstance(n, (ast.stmt, ast.ExceptHandler)) and not isinstance(n, (ast.Global, ast.Nonlocal))]
+    skip = {n.lineno for n in nodes if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)}
+    for n in nodes:
+        if PRAGMA.search(lines[n.lineno - 1]):
+            skip.update(range(n.lineno, n.end_lineno + 1))
+    out = []
+    for n in nodes:
+        if n.lineno in skip:
+            continue
+        body = getattr(n, "body", None)
+        first = min([d.lineno for d in getattr(n, "decorator_list", [])] + [n.lineno])
+        out.append([first, max(n.lineno, body[0].lineno - 1) if isinstance(body, list) and body else n.end_lineno])
+    return sorted(out)
+
+
+def cover_report(rows):
+    """The table `coverage report -m` prints. rows = [(file, the first line of every statement, the lines that never ran)]."""
+    def pct(n, m):  # only a truly empty / truly full file shows 0% / 100%
+        p = 100 * (n - m) / n if n else 100
+        return f"{max(1, min(99, int(p + .5))) if 0 < p < 100 else int(p + .5)}%"
+
+    def span(stmts, miss):  # consecutive missing statements are written as a range: 12-15, 30
+        parts, group = [], []
+        for ln in [*stmts, None]:
+            if ln in miss:
+                group.append(ln)
+            elif group:
+                parts.append(str(group[0]) if len(group) == 1 else f"{group[0]}-{group[-1]}")
+                group = []
+        return ", ".join(parts)
+
+    w = max([4] + [len(r[0]) for r in rows])
+    line = lambda name, n, m, text: f"{name:<{w}} {n:>6} {m:>6} {pct(n, m):>6}   {text}".rstrip()
+    head = f"{'Name':<{w}} {'Stmts':>6} {'Miss':>6} {'Cover':>6}   Missing"
+    body = [line(name, len(stmts), len(miss), span(stmts, set(miss))) for name, stmts, miss in rows]
+    bar = "-" * max(len(t) for t in [head, *body])
+    total = [bar, line("TOTAL", sum(len(r[1]) for r in rows), sum(len(r[2]) for r in rows), "")] if len(rows) > 1 else []
+    return "\n".join([head, bar, *body, *total])
+
+
+def cover_of(T, files):
+    """What the run covered: {files: {name: [lines that never ran]}, report: text}, or None when no file ran."""
+    rows = []
+    for name in sorted(T):
+        if not T[name]["hits"]:
+            continue  # never ran (or has a syntax error): not part of the report, like Coverage.py without --source
+        try:
+            spans = {}
+            for a, b in statements(files[name]):
+                spans[a] = max(b, spans.get(a, 0))
+        except SyntaxError:
+            continue
+        rows.append((name, sorted(spans), [a for a, b in sorted(spans.items()) if not any(l in T[name]["hits"] for l in range(a, b + 1))]))
+    return {"files": {n: m for n, _, m in rows}, "report": cover_report(rows)} if rows else None
+
+
 def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="", locked_json="[]"):
     """Run 'main' with line tracing: as __main__, or (for a mode added by a library, e.g. doctest) as a module handed to that mode."""
     files, answers = json.loads(files_json), json.loads(answers_json)
@@ -479,8 +540,8 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
     info, T, step = {}, {}, [0]
     _BEAT[0] = lambda: step.__setitem__(0, 0)  # a library calls this when the program shows it is alive: restart the infinite-loop count
     # timeline: steps = [file index, line, ...], facts as described in the module docstring; over[0] = the step cap was hit;
-    # cur = (file, line) being executed (to place an error at the right spot); outn / outover count the output against OUTLIM
-    steps, facts, over, cur, outn, outover = [], [], [False], [None, 0], [0], [False]  # timeline: steps = [file, line, ...]
+    # cur = (file, line) being executed (to place an error at the right spot)
+    steps, facts, over, cur = [], [], [False], [None, 0]  # timeline: steps = [file, line, ...]
     for name, src in files.items():
         if name in locked:  # kept in memory only (see Hidden) and out of the trace
             hidden[name[:-3]] = src
@@ -488,6 +549,8 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
         path = os.path.join(root, name)
         with open(path, "w", encoding="utf-8") as f:
             f.write(src)
+        if not name.endswith(".py"):
+            continue  # a text file (test_klondike.txt): it only has to be on disk, for open() and doctest.testfile()
         a = json.loads(analyze(src))
         defs, prm = {}, {}
         for n in a.get("nodes", []):
@@ -557,21 +620,22 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
     def ui_input(msg=""):  # replaces input(): answers come from the page, which re-runs the program when one is missing
         sys.stdout.write(str(msg))
         sys.stdout.flush()
+        if sys.stdin is not saved["stdin"]:  # the program gave itself a stream (sys.stdin = io.StringIO("D\nQ\n")): read that, as input() does
+            line = sys.stdin.readline()
+            if not line:
+                raise EOFError("EOF when reading a line")
+            return line.rstrip("\n")
         if not answers:
             raise NeedInput(str(msg))
         v = str(answers.pop(0))
         sys.stdout.write(v + "\n")
         return v
 
-    class Scrub:  # hides the temp folder in anything printed (tracebacks, doctest reports) and caps the output
+    class Scrub:  # hides the temp folder in anything printed (tracebacks, doctest reports)
         def __init__(self, f):
             self.f = f
 
         def write(self, s):
-            outn[0] += len(s)
-            if outn[0] > OUTLIM and not outover[0]:
-                outover[0] = True
-                raise OutputLimit(f"Stopped: more than {OUTLIM:,} characters of output.")
             return self.f.write(s.replace(root + os.sep, "").replace(root + "/", ""))
 
         def __getattr__(self, k):
@@ -592,7 +656,8 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
         msg = "".join(traceback.format_exception_only(type(e), e)).strip().splitlines()[-1]
         return {"file": loc[0], "line": loc[1], "msg": msg} if loc else None
 
-    mod = types.ModuleType("__main__" if mode == "run" else main[:-3])
+    program = main.endswith(".py")  # a text file isn't executed: a mode (doctest) reads it through mod.__file__
+    mod = types.ModuleType("__main__" if mode == "run" or not program else main[:-3])
     mod.__file__ = os.path.join(root, main)
     saved = {}
 
@@ -615,7 +680,8 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
     finder = Hidden()
 
     def enter():  # install the sandbox: import guard, traced execution, our own stdout, project files on the path
-        saved.update(main=sys.modules.get("__main__"), path=sys.path[:], cwd=os.getcwd(), out=sys.stdout, err=sys.stderr)
+        saved.update(main=sys.modules.get("__main__"), path=sys.path[:], cwd=os.getcwd(), out=sys.stdout, err=sys.stderr, stdin=sys.stdin,
+                     builtins=dict(vars(builtins)))
         builtins.__import__, builtins.input = guard, ui_input
         sys.stdout, sys.stderr = Scrub(sys.stdout), Scrub(sys.stderr)
         sys.path.insert(0, root)
@@ -629,6 +695,9 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
     def leave():
         sys.settrace(None)
         builtins.__import__, builtins.input = real_import, real_input
+        for k, v in saved["builtins"].items():
+            setattr(builtins, k, v)  # undo a program's `builtins.print = ...`, so one run can't break the next
+        sys.stdin = saved["stdin"]
         sys.path[:] = saved["path"]
         if finder in sys.meta_path:
             sys.meta_path.remove(finder)
@@ -643,10 +712,11 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
     err, need, gui = None, False, False
     enter()
     try:
-        exec(compile(files[main], mod.__file__, "exec"), mod.__dict__)
+        if program:
+            exec(compile(files[main], mod.__file__, "exec"), mod.__dict__)
         if mode in MODES:
             MODES[mode](mod)
-    except (StepLimit, OutputLimit) as e:
+    except StepLimit as e:
         sys.stderr.write(f"{e}\n")
         err = {"file": cur[0], "line": cur[1], "msg": str(e)} if cur[0] else None
     except NeedInput:
@@ -664,8 +734,6 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
         if gui:
             def reset():
                 step[0] = 0
-                outn[0] = 0
-                outover[0] = False
 
             _LIVE.update(enter=enter, leave=leave, reset=reset, T=T, step=step, root=root, mods=mods)
         else:
@@ -674,7 +742,7 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
             for m in mods | {"__main__"}:
                 sys.modules.pop(m, None)
             shutil.rmtree(root, ignore_errors=True)
-    return json.dumps({"files": T, "error": err, "need_input": need, "gui": gui,
+    return json.dumps({"files": T, "error": err, "need_input": need, "gui": gui, "cover": cover_of(T, files),
                        "timeline": {"files": names, "steps": steps, "facts": facts, "trunc": over[0]}})
 
 
@@ -700,7 +768,7 @@ def gui_call(lib, fn):
         fn()
     except NeedInput:
         sys.stderr.write("input() can't be used inside a window callback here; use an Entry widget instead.\n")
-    except (StepLimit, OutputLimit) as e:
+    except StepLimit as e:
         sys.stderr.write(f"{e}\n")
     except BaseException as e:
         if not any(isinstance(e, g["exit"]) for g in GUI.values()):

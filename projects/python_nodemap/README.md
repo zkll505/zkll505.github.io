@@ -25,14 +25,17 @@ your browser's `localStorage`.
   built-ins, unreachable code and imports that aren't available, as squiggles in the editor.
 - **Errors**: the failing line and message are marked in the editor and on the map; tracebacks in the console are
   clickable.
-- **Safe to run**: a **Stop** button (the program runs in a Web Worker), an infinite-loop cutoff, an output cap, and an import
-  allow-list.
-- **`input()`** works (the page asks for the answer in the console).
-- **Projects**: export a zip of every `.py` plus a PNG of each map, import a zip, or share the whole project as a link.
+- **Safe to run**: a **Stop** button (the program runs in a Web Worker), an infinite-loop cutoff, a console that keeps only its newest
+  output, and an import allow-list.
+- **`input()`** works (the page asks for the answer in the console), and a program that gives itself a stream to read
+  (`sys.stdin = io.StringIO("D\nQ\n")`) gets its input from that, which is how a test can play a whole game. ANSI colours and
+  "clear screen" in a program's output work too, so a text game can redraw its board.
+- **Projects**: export a zip of every file plus a PNG of each `.py` map, import a zip, or share the whole project as a link. A project
+  can also hold plain-text `.txt` files, such as a doctest file (`test_klondike.txt`).
 - **Locked files**: a `# pynodemap lock <password>` line makes a file unopenable without the password, so an assignment can carry
   tests the student can run (the **Tests** button, or `import`) but not read. See [docs/LOCKED_FILES.md](docs/LOCKED_FILES.md).
-- **Libraries** (each one is a plug-in, see below): `random`, `math`, `time`, `enum`, `pathlib`, `typing`, `doctest`, `unittest`,
-  `tkinter` (GUI windows) and `turtle`.
+- **Libraries** (each one is a plug-in, see below): `random`, `math`, `time`, `enum`, `pathlib`, `typing`, `sys`, `io`, `builtins`,
+  `contextlib`, `collections`, `copy`, `re`, `itertools`, `functools`, `string`, `doctest`, `unittest`, `tkinter` (GUI windows) and `turtle`.
 
 ## Run it
 
@@ -66,12 +69,22 @@ so right after deploying a hard refresh (Ctrl+F5) shows the new version.
 
 Other things worth knowing:
 
-- **Files**: **+** in the explorer makes a file (names must be importable: letters, digits, `_`). Files import each other with
-  a plain `import helpers`. Hover a file to rename (✎) or delete (✕) it.
+- **Files**: **+** in the explorer makes a file: `name.py` (names must be importable: letters, digits, `_`) or a plain-text
+  `name.txt`. Files import each other with a plain `import helpers`. Hover a file to rename (✎) or delete (✕) it.
+- **Text files** (`.txt`) are kept with the project and written next to the `.py` files on every run, so `open("data.txt")` and
+  `doctest.testfile("test_klondike.txt")` find them. They get no node map or hints; **Run** (or **Doctest**) on one runs the `>>>`
+  examples in it.
 - **Share** copies a link that contains the whole project (it lives in the part after `#`, so no server ever sees it). Opening
-  one asks first, then **replaces** everything in the explorer. **Import** takes `.py` files (added to the project) or a `.zip`
-  (replaces the project, after asking). **Export** downloads a zip of every `.py` plus a PNG of each file's node map.
-- **Doctest** and **Tests** buttons (next to Run) import the active file and run its `>>>` examples or its `unittest` tests.
+  one asks first, then **replaces** everything in the explorer. **Import** takes `.py` and `.txt` files (added to the project) or a
+  `.zip` (replaces the project, after asking; anything in it that isn't a `.py` or `.txt` is skipped). **Export** downloads a zip of every
+  file plus a PNG of each `.py` file's node map.
+- **Doctest** and **Tests** buttons (next to Run) import the active file and run its `>>>` examples or its `unittest` tests (on a
+  `.txt` file, Doctest runs the examples in the file itself).
+- **Coverage** (next to them) runs the active file like Run, then prints a table like `coverage report -m` (statements, how many
+  never ran, the percentage, the line numbers) and shades the lines that never ran in the editor, so you can see which tests are
+  missing. It counts statements the way Coverage.py does (line coverage, not branch coverage; docstrings are not counted and
+  `# pragma: no cover` leaves a line, or a whole `def` / `if`, out). To measure a test file, run the `.py` file whose `__main__` block
+  runs it, or open the `.txt` and press Coverage. Editing a file clears the shading.
 - **Stop** ends a run immediately by restarting Python in the background (a couple of seconds; the files are cached).
 - `input()` shows an input box in the console. See [Limits](#limits) for how this works and what it means for your program.
 - The status bar shows the number of hints (hover for the list), the cursor position and which libraries are available.
@@ -104,8 +117,8 @@ Only these can be imported (plus the project's own files); anything else raises 
 
 | Library                          | What you get                                                                                                                                                                                                                                |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `random`, `math`, `time`, `enum`, `pathlib`, `typing` | The standard modules (autocomplete included). `pathlib` and `open()` work on a temporary folder that is deleted when the run ends.                                                                                                                                                                                               |
-| `doctest`                        | The module, plus a **Doctest** button that runs the active file's `>>>` examples.                                                                                                                                                           |
+| `random`, `math`, `time`, `enum`, `pathlib`, `typing`, `sys`, `io`, `builtins`, `contextlib`, `collections`, `copy`, `re`, `itertools`, `functools`, `string` | The standard modules (autocomplete included). `pathlib` and `open()` work on a temporary folder that is deleted when the run ends.                                                                                                                                                                                               |
+| `doctest`                        | The module, plus a **Doctest** button that runs the active file's `>>>` examples (a `.txt` file's, if that is the active file).                                                                                                                                                           |
 | `unittest`                       | The module, plus a **Tests** button; the report is shown in the console in normal colour.                                                                                                                                                   |
 | `tkinter`                        | A look-alike of real tkinter drawn as floating windows: the common widgets, `pack`/`grid`/`place`, variables, `bind`, `after`, `Canvas`, menus, `messagebox`, `ttk` basics. See its limits in [`libs/tkinter/lib.py`](libs/tkinter/lib.py). |
 | `turtle`                         | The everyday turtle API on top of that canvas: movement, pen, colours, fill, shapes, stamps, `write`, key/click/timer events and the module-level functions.                                                                                |
@@ -131,7 +144,8 @@ Each library, what it supports and what it doesn't: [libs/README.md](libs/README
   counted towards the infinite-loop cutoff, and closing the window mid-run ends the program (`TclError`, or `turtle.Terminator`).
 - Programs run in the browser's single-threaded Python: no threads, network or third-party packages, and files only in a temporary
   folder that is deleted when the run ends.
-- Safety caps: a run stops after 1.5 million executed lines (assumed to be an infinite loop) or 400,000 characters of output;
+- Safety caps: a run stops after 1.5 million executed lines (assumed to be an infinite loop). The console keeps the newest 200,000
+  characters and drops the oldest when it nears that (a note at the top says so), so a program can print as much as it likes;
   the step slider records the first 30,000 steps. A share link carries at most 50 files of under 500,000 characters each.
 
 ## Troubleshooting
@@ -202,7 +216,7 @@ Where to change what:
 | add or restyle a node kind | `KIND` in `runner.py`; `LABEL`, `COLOR_DARK`, `COLOR_LIGHT` in `nodemap.js` |
 | change how the map is laid out or wired | `NodeMap.build` in `nodemap.js` (layout, routing) and `sources()` / `wire()` in `runner.py` (which wires exist) |
 | add a module students can import | a folder in `libs/` ([guide](docs/ADDING_A_LIBRARY.md)) |
-| change the safety caps | `LIMIT`, `MAXSTEPS`, `MAXFACTS`, `OUTLIM` at the top of `runner.py` |
+| change the safety caps | `LIMIT`, `MAXSTEPS`, `MAXFACTS` at the top of `runner.py`; `MAXOUT` / `KEEPOUT` (the console) in `app.js` |
 | add a toolbar button or a shortcut | `index.html` and the matching handler (or `extraKeys`) in `app.js` |
 | change the starter project | `STARTER` in `app.js` |
 | change the Pyodide version | `PYODIDE` and `PYODIDE_SIZES` in `app.js` (see the comment there first) |

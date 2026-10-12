@@ -164,6 +164,8 @@ body.light #out a { color: #0066bf; }
 /* editor overlays: run position, error, lint */
 .cm-now { background: rgba(255, 216, 102, .22) !important; }
 .cm-err { background: rgba(244, 71, 71, .2) !important; }
+.cm-miss { background: rgba(244, 135, 113, .13); box-shadow: inset 3px 0 0 #f48771; }
+body.light .cm-miss { background: rgba(205, 49, 49, .09); box-shadow: inset 3px 0 0 #cd3131; }
 .err-widget { margin: 2px 0 4px; padding: 2px 10px; border-left: 3px solid #f14c4c; background: rgba(244, 71, 71, .12); color: #f48771; font: 12px Consolas, "Cascadia Mono", monospace; }
 body.light .err-widget { color: #cd3131; }
 .lint-warn { text-decoration: underline wavy #cca700; text-underline-offset: 3px; }

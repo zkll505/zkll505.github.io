@@ -181,11 +181,9 @@ def input_and_errors():
         assert e["file"] == "a.py" and "SyntaxError" in e["msg"], e
         e = json.loads(runner.run(json.dumps({"a.py": "while True:\n    pass\n"}), "a.py"))["error"]
         assert e["line"] in (1, 2) and "infinite loop" in e["msg"], e   # the line it was on when cut off
-    runner.OUTLIM = 50
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as se:
-        runner.run(json.dumps({"a.py": "while True:\n    print('spam spam spam')\n"}), "a.py")
-    assert "characters of output" in se.getvalue()
-    runner.OUTLIM = 400_000
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as se:  # a runaway print loop is ended by the line cap
+        e = json.loads(runner.run(json.dumps({"a.py": "while True:\n    print('spam spam spam')\n"}), "a.py"))["error"]
+    assert "infinite loop" in e["msg"] and "infinite loop" in se.getvalue(), e
 
 
 TKAPP = '''import tkinter as tk
@@ -696,6 +694,91 @@ def typing_module():
     assert g["hints"] == [] and "error" not in g, g
 
 
+def text_files():
+    """A .txt file in the project is written next to the .py files: open() reads it, doctest.testfile() runs it (module-relative, as
+    klondike.py's own `__main__` does), and the Doctest mode runs it when it is the active file. It is not analysed or traced."""
+    calc = "def add(a, b):\n    return a + b\n"
+    good = ">>> from calc import add\n>>> add(1, 2)\n3\n"
+    bad = ">>> from calc import add\n>>> add(1, 2)\n4\n"
+
+    def go(files, main, mode="run"):
+        with contextlib.redirect_stdout(io.StringIO()) as o, contextlib.redirect_stderr(io.StringIO()) as e:
+            r = json.loads(runner.run(json.dumps(files), main, mode))
+        return r, o.getvalue() + e.getvalue()
+
+    r, out = go({"main.py": "print(open('data.txt').read().upper())\n", "data.txt": "hello"}, "main.py")
+    assert out == "HELLO\n" and r["error"] is None, out
+    assert list(r["files"]) == ["main.py"], "only .py files are traced"
+    boot = "import doctest\nprint(doctest.testfile('t.txt'))\n"  # what a program's own `if __name__ == '__main__'` block does
+    r, out = go({"calc.py": calc, "main.py": boot, "t.txt": good}, "main.py")
+    assert "TestResults(failed=0, attempted=2)" in out and r["error"] is None, out
+    r, out = go({"calc.py": calc, "t.txt": good}, "t.txt", "doctest")  # the text file is the active file
+    assert out == "doctest: 2 run, 0 failed\n" and r["error"] is None, out
+    r, out = go({"calc.py": calc, "t.txt": bad}, "t.txt", "doctest")
+    assert 'File "t.txt", line 2, in t.txt' in out and "Expected:\n    4\nGot:\n    3" in out and "doctest: 2 run, 1 failed" in out, out
+    r, out = go({"calc.py": calc, "t.txt": "just words\n"}, "t.txt", "doctest")
+    assert out == "doctest: no >>> examples found in the file\n", out
+    r, out = go({"calc.py": "x = 1\n", "t.txt": "3 +\n"}, "calc.py")  # the text is never compiled as Python
+    assert out == "" and r["error"] is None, out
+
+
+def coverage_report():
+    """statements() counts what Coverage.py counts, run() reports the lines that never ran, and the table reads like `coverage report -m`."""
+    sample = '"""docstring\nof two lines"""\n\n@decorator\ndef f(x):\n    """doc"""\n    if x:\n        return 1\n    else:\n        return 2\n\n' \
+             'def g():  # pragma: no cover\n    return 3\n\nclass C:\n    """doc"""\n    y = [1,\n         2]\n\ntry:\n    f(1)\nexcept ValueError:\n    pass\n' \
+             'def h():\n    global z\n    z = 1\n'
+    got = runner.statements(sample)
+    # (docstrings, the `global` line and the `# pragma: no cover` function are not statements; a decorator belongs to its def; a
+    # compound statement is only its header; a multi-line statement is one)
+    assert got == [[4, 5], [7, 7], [8, 8], [10, 10], [15, 15], [17, 18], [20, 20], [21, 21], [22, 22], [23, 23], [24, 24], [26, 26]], got
+
+    prog = "def f(x):\n    if x:\n        return 1\n    return 2\n\nf(1)\n"
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = json.loads(runner.run(json.dumps({"main.py": prog, "idle.py": "x = 1\n", "data.txt": "text"}), "main.py"))
+    assert r["cover"]["files"] == {"main.py": [4]}, r["cover"]  # idle.py never ran, data.txt isn't Python
+    assert re.search(r"main\.py\s+5\s+1\s+80%\s+4$", r["cover"]["report"]), r["cover"]["report"]
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = json.loads(runner.run(json.dumps({"main.py": "import idle\nraise SystemExit\n", "idle.py": prog + "f(0)\n"}), "main.py"))
+    assert r["cover"]["files"] == {"idle.py": [], "main.py": []} and "TOTAL" in r["cover"]["report"] and "100%" in r["cover"]["report"], r["cover"]
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = json.loads(runner.run(json.dumps({"main.py": "import hidden\n", "hidden.py": "x = 1\n"}), "main.py", "run", "[]", 0, "", '["hidden.py"]'))
+    assert r["cover"]["files"] == {"main.py": []}, "a locked file is not traced, so it is not reported"
+
+    table = runner.cover_report
+    assert "99%" in table([("a.py", list(range(1, 201)), [5])]) and "1%" in table([("a.py", list(range(1, 201)), list(range(2, 201)))]), "never 100% / 0% by rounding"
+    assert "100%" in table([("a.py", [1, 2], [])]) and "  0%" in table([("a.py", [1, 2], [1, 2])])
+    assert table([("a.py", list(range(1, 11)), [3, 4, 5, 9])]).endswith("3-5, 9")
+    assert table([("a.py", [1, 2, 5, 6, 9], [2, 5, 6])]).endswith("2-6"), "ranges go by statement, like Coverage.py"
+
+
+def big_output():
+    """Printing a lot is not an error: the page's console keeps the newest part (see app.js), and only the line cap ends a runaway loop."""
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        r = json.loads(runner.run(json.dumps({"main.py": "for i in range(600):\n    print('x' * 1000)\n"}), "main.py"))
+    assert r["error"] is None and o.getvalue().count("x") == 600_000, r["error"]
+
+
+def stdin_and_builtins():
+    """A program may give itself a stream to read input() from (sys.stdin = io.StringIO(...)), and nothing it changes outlives the run."""
+    def go(src, answers="[]"):
+        with contextlib.redirect_stdout(io.StringIO()) as o, contextlib.redirect_stderr(io.StringIO()) as e:
+            r = json.loads(runner.run(json.dumps({"main.py": src}), "main.py", "run", answers))
+        return r, o.getvalue() + e.getvalue()
+
+    r, out = go("import io, sys\nsys.stdin = io.StringIO('a\\nb\\n')\nprint(input('? '), input())\ntry:\n    input()\nexcept EOFError as e:\n    print('EOF', e)\n")
+    assert out == "? a b\nEOF EOF when reading a line\n" and r["error"] is None, out
+    r, out = go("print(input('name? '))\n", '["Zed"]')  # the next run reads its answers from the page again
+    assert out == "name? Zed\nZed\n", out
+    r, out = go("import builtins\nbuiltins.print = lambda *a, **k: None\nprint('hidden')\n")
+    assert out == "" and r["error"] is None, out
+    r, out = go("print('visible')\n")
+    assert out == "visible\n", out
+    r, out = go("import builtins, io, sys\nbuiltins.input = lambda prompt='': 'patched'\nprint(input())\n")
+    assert out == "patched\n", out
+    r, out = go("print(input('again? '))\n", '["fine"]')
+    assert r["need_input"] is False and out.startswith("again? fine"), out
+
+
 if __name__ == "__main__":
     runner.LIMIT = 20_000  # a smaller cutoff keeps the infinite-loop checks fast
     analyze()
@@ -713,5 +796,9 @@ if __name__ == "__main__":
     window_events()
     locked_files()
     typing_module()
+    text_files()
+    coverage_report()
+    big_output()
+    stdin_and_builtins()
     enum_and_unittest()
     print("ok")
