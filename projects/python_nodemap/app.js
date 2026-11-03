@@ -9,7 +9,8 @@
                     Run -> W.call('run') -> S.trace + S.tl (the timeline) -> draw() again, now with values
                     stepping -> NodeMap.viewAt(S.tl, step) -> draw() */
 'use strict';
-const $ = s => document.querySelector(s);
+let pipWin = null; // the window the node map was popped out into (see popMap), or null
+const $ = s => document.querySelector(s) || pipWin?.document.querySelector(s);
 const STORE = 'python_nodemap.v1', PREFS = 'python_nodemap.prefs'; // localStorage keys: the project (files, tabs) and the preferences
 const PYODIDE = 'https://cdn.jsdelivr.net/pyodide/v0.29.5/full/'; // pinned: Pyodide 314+ only supports module workers; 0.29 (Python 3.13) works in our classic Blob worker
 // unpacked sizes of what Pyodide downloads (about 5 MB over the wire), used for the progress bar. Re-measure if PYODIDE changes.
@@ -73,6 +74,96 @@ if __name__ == "__main__":
     """
     return sum(nums) / len(nums)
 `,
+  // for teachers: how to use the tool with a class (locked; the password is "teach", see the README)
+  'education.py': `# pynodemap lock teach
+#
+# ================================================================================================================
+#   PYTHON NODEMAP FOR EDUCATORS
+# ================================================================================================================
+# You opened this with the password "teach". Students see this file with a lock and can't open it without that
+# password. It is only part of the sample project: delete it from your own projects (hover it, then the cross).
+# The Tutorial button explains the tool itself; open pynodesettings.py for the Educator guide button.
+#
+# ----------------------------------------------------------------------------------------------------------------
+#   AN ASSIGNMENT IN SIX STEPS
+# ----------------------------------------------------------------------------------------------------------------
+#   1. Write the starter code students get (klondike.py, say), plus any data or doctest files (.txt).
+#   2. Make a file named gradeuser.py (the + in the explorer). It starts out as a grading template: every class
+#      is a group of unittest tests with a weight, and the grade is the weighted average of the groups.
+#   3. Make a file named pynodesettings.py, one setting per comment line, for example
+#          # hide gradeuser.py          (students don't see the grading tests at all)
+#          # track pastes               (every paste into the editor is logged in paste_log.txt)
+#      and lock it with a password of your own: a line starting "# pynodemap lock" followed by the password.
+#   4. Press Share. The link holds every file, locked and hidden ones too (in the part after #, which never
+#      reaches a server). Post it for the class. Students who open it get the whole project, locks included.
+#   5. Students work and send the result back: Share (a link) or Export (a zip of their files).
+#   6. Open a student's link or zip (Import), open pynodesettings.py with your password and press Grade.
+#
+# ----------------------------------------------------------------------------------------------------------------
+#   LOCKED FILES
+# ----------------------------------------------------------------------------------------------------------------
+#   A line starting "# pynodemap lock" makes a .py file unopenable without the password written after it (no
+#   password at all seals it for good). A locked file still runs: students can import it, and the Tests button
+#   runs the unittest tests in locked files too, without ever showing their source, not even in tracebacks.
+#   The password is asked once per session; reloading the page locks the file again.
+#
+# ----------------------------------------------------------------------------------------------------------------
+#   PYNODESETTINGS.PY (lock it, or students can open it and change it back)
+# ----------------------------------------------------------------------------------------------------------------
+#   # no copy paste        no copying, cutting, pasting or dragging text in the editor; no pasting in the console
+#   # track pastes         each paste into the editor goes in paste_log.txt (time, file, line, size, how it starts);
+#                          the log is read only, can't be deleted, and comes back with the student's Share / Export
+#   # grade tests.py       the file Grade runs (default: gradeuser.py if there is one); a .txt file of >>> examples
+#                          works too, each example counting as one test
+#   # self grade: true     Grade on every file: students grade themselves and see which tests fail (by description)
+#   # grade_verbose: true  Grade also shows each failing test's code and what went wrong (default: descriptions only)
+#   # hide a.py b.txt      those files are not listed at all and can't be opened; they still run and import
+#   # read only data.txt   those files open but can't be changed, renamed or deleted
+#
+# ----------------------------------------------------------------------------------------------------------------
+#   TEACHER MODE
+# ----------------------------------------------------------------------------------------------------------------
+#   Once you have entered the password of pynodesettings.py (in this browser tab), hidden files are listed again,
+#   marked with a ghost, and Export puts every file in the zip, locked and hidden ones included. The Grade and
+#   Educator guide buttons appear while pynodesettings.py is the open file. Reloading the page ends it.
+#
+# ----------------------------------------------------------------------------------------------------------------
+#   GRADING (gradeuser.py)
+# ----------------------------------------------------------------------------------------------------------------
+#   Each unittest.TestCase class is a group. Give a class "weight = 3" to make it count three times as much as a
+#   class with the default weight of 1. A group's score is the share of its tests that pass; the grade is
+#   sum(weight x score) / sum(weight). Grade prints the grade and a line per group with the tests that fail:
+#       Grade: 62.5%
+#         Basics  weight 1    2/2 passed    100%
+#         Harder  weight 3    1/2 passed     50%   not yet: test_edge_cases
+#   Grade imports the student's module the way the tests do, so name the student's file in gradeuser.py's import.
+#   Give every test a docstring: its first line is what Grade shows for a test that fails.
+#
+# ----------------------------------------------------------------------------------------------------------------
+#   WHAT STUDENTS CAN RUN THEMSELVES
+# ----------------------------------------------------------------------------------------------------------------
+#   Run (Ctrl+Enter), Doctest (the >>> examples in docstrings, or in a .txt file), Tests (unittest, locked test
+#   files included), Coverage (a coverage report -m style table; lines that never ran are shaded red).
+#   input() is answered right in the console, and after a run the console is a >>> Python prompt in the program's
+#   variables, like IDLE.
+#
+# ----------------------------------------------------------------------------------------------------------------
+#   TEACHING WITH THE NODE MAP
+# ----------------------------------------------------------------------------------------------------------------
+#   Every statement is a box; a box inside a box is part of its body (that's also scope). After Run each box shows
+#   the values it set and how often it ran (x5); boxes that never ran are dimmed. Wires: solid = data (where a
+#   value comes from), dashed orange = a call (a two-way arrow when it returns a value), dotted = a value carried
+#   round a loop. The step bar replays the run one line at a time: good for "what is total after the 3rd pass?"
+#   questions. The pop-out button puts the map in its own window, handy on a projector.
+#
+# ----------------------------------------------------------------------------------------------------------------
+#   GOOD TO KNOW
+# ----------------------------------------------------------------------------------------------------------------
+#   Everything runs in the student's browser: nothing is uploaded, and there are no accounts. That also means the
+#   locks and settings are a classroom deterrent, not security: someone determined can read a share link or the
+#   browser's storage. Keep real answer keys out of what you hand out if that matters.
+#   Long share links can be cut off by some chat apps; send a zip (Export) instead.
+`,
 };
 
 // ---- state. Files + open tabs persist in localStorage; everything else lives for the session.
@@ -110,10 +201,51 @@ const okName = n => /^[A-Za-z_]\w*\.py$/.test(n) || /^[\w-]+\.txt$/.test(n);
 const LOCK = /^[ \t]*#[ \t]*pynodemap[ \t]+lock\b[ \t]*(.*?)[ \t]*$/im;
 S.unlocked = new Set(); // locked files whose password was entered during this session (never saved)
 const lockOf = n => { const m = isPy(n) ? LOCK.exec(S.files[n] ?? '') : null; return m ? m[1] : null; }; // its password ('' = none: sealed), or null if it isn't locked
-const isLocked = n => lockOf(n) !== null && !S.unlocked.has(n);
+// ---- pynodesettings.py: a teacher's settings for the project, one comment line each (docs/SETTINGS.md). Lock it like any other file
+// (`# pynodemap lock <password>`) so students can't change it; the settings apply all the same.
+//   # no copy paste           no copying, cutting, pasting or dragging text in the editor or the console
+//   # track pastes            every paste into the editor is written to paste_log.txt (read only, can't be deleted)
+//   # grade tests.py          the file Grade runs (unittest, or the >>> examples of a .txt); without it, gradeuser.py
+//   # self grade: true        the Grade button is on every file, so students can grade themselves (it is otherwise only on this file)
+//   # grade_verbose: true     Grade shows the code of each failing test and what went wrong (false: only the tests' descriptions)
+//   # hide a.py notes.txt     those files don't show up at all; they still run and can be imported (like locked files)
+//   # read only data.txt      those files open but can't be changed
+const SETTINGS = 'pynodesettings.py', PASTES = 'paste_log.txt';
+const cfg = (() => { // the parsed settings, re-read whenever the settings file changes
+  let src = null, val = null;
+  return () => {
+    if (S.files[SETTINGS] === src && val) return val;
+    src = S.files[SETTINGS];
+    val = { nocopy: false, pastes: false, grade: null, selfgrade: false, verbose: false, hide: new Set(), readonly: new Set() };
+    for (const line of (src || '').split('\n')) {
+      const m = /^\s*#\s*(no\s*copy\s*(?:\/|,|and|&)?\s*paste|track\s+pastes?|paste\s+tracking|self[\s_]*grade|grade[\s_]*verbose|grade|hide|hidden|read\s*only)\b\s*(.*?)\s*$/i.exec(line);
+      if (!m) continue;
+      const key = m[1].toLowerCase().replace(/[\s_]+/g, ''), rest = m[2].replace(/^[:=]\s*/, ''), names = rest.split(/[\s,]+/).filter(Boolean);
+      const yes = !/^(false|no|off|0)$/i.test(rest); // a yes / no setting: `# self grade: true` (a bare `# self grade` means yes too)
+      if (key.startsWith('nocopy')) val.nocopy = true;
+      else if (key.startsWith('track') || key === 'pastetracking') val.pastes = true;
+      else if (key === 'selfgrade') val.selfgrade = yes;
+      else if (key === 'gradeverbose') val.verbose = yes;
+      else if (key === 'grade') val.grade = names[0] || null;
+      else if (key === 'hide' || key === 'hidden') names.forEach(n => val.hide.add(n));
+      else names.forEach(n => val.readonly.add(n));
+    }
+    if (val.pastes) val.readonly.add(PASTES);
+    return val;
+  };
+})();
+// teacher mode: the project has a pynodesettings.py and it is open to you (its password was entered this session, or it has none).
+// Then hidden files are listed again (👻) and can be opened, and Export takes every file, locked ones included.
+const teacher = () => SETTINGS in S.files && (lockOf(SETTINGS) === null || S.unlocked.has(SETTINGS));
+const isHidden = n => cfg().hide.has(n) && !teacher();
+const isReadOnly = n => cfg().readonly.has(n);
+// a locked file can't be opened without its password; a hidden one can't be opened (or seen) at all
+const isLocked = n => isHidden(n) || (lockOf(n) !== null && !S.unlocked.has(n));
+// files an import must not overwrite: locked, hidden or read only (the paste log among them)
+const isProtected = n => isLocked(n) || isReadOnly(n);
 const firstOpenable = skip => Object.keys(S.files).sort().find(n => n !== skip && !isLocked(n));
 // the files as autocomplete may see them: a locked file's names stay secret
-const visibleFiles = () => Object.fromEntries(Object.entries(S.files).filter(([n]) => isPy(n)).map(([n, s]) => [n, isLocked(n) ? '' : s]));
+const visibleFiles = () => Object.fromEntries(Object.entries(S.files).filter(([n]) => isPy(n) && !isHidden(n)).map(([n, s]) => [n, isLocked(n) ? '' : s]));
 // a saved project must never open a locked file by itself, as the active file or in a tab
 S.open = S.open.filter(n => n in S.files && !isLocked(n));
 if (isLocked(S.active)) {
@@ -159,6 +291,7 @@ const W = {
         if (m.type === 'progress') return W.onProgress(m.loaded, m.total);
         if (m.type === 'gui') return PyLibs.view(m.lib)?.apply(m.tree);
         if (m.type === 'trace') return liveTrace(m.files);
+        if (m.type === 'input') return wantInput();
         const p = W.pend.get(m.id);
         W.pend.delete(m.id);
         if (p) m.error ? p.rej(new Error(m.error)) : p.res(m.result);
@@ -230,17 +363,19 @@ function writeOut(text, cls) { // append text to the console. Program output (cl
 // redone on every line) and a note at the top says so; a program can print as much as it likes without being stopped or slowing the page.
 const MAXOUT = 200000, KEEPOUT = 150000;
 let outChars = 0; // characters on the console now (not counting the note)
-const clearOut = () => { $('#out').textContent = ''; outChars = 0; queued = []; };
+// #line (an <input> after the output, so it sits right after a prompt like "number: ") is always the console's last child
+const LINE = $('#line'), IN = $('#in');
+const clearOut = () => { $('#out').textContent = ''; $('#out').append(LINE); outChars = 0; queued = []; };
 function trimOut() {
   const box = $('#out');
   let note = box.querySelector(':scope > #cut');
   if (!note) { note = Object.assign(document.createElement('span'), { id: 'cut', className: 'dim', textContent: '[earlier output cleared]\n' }); box.prepend(note); }
-  while (outChars > KEEPOUT && note.nextSibling?.nextSibling) { // (the newest piece always stays)
+  while (outChars > KEEPOUT && note.nextSibling?.nextSibling && note.nextSibling.nextSibling !== LINE) { // (the newest piece always stays)
     outChars -= note.nextSibling.textContent.length;
     note.nextSibling.remove();
   }
   const only = note.nextSibling; // one huge piece of text (a print of millions of characters): keep its end
-  if (outChars > KEEPOUT && only?.childNodes.length === 1 && only.firstChild.nodeType === 3) { only.firstChild.data = only.firstChild.data.slice(-KEEPOUT); outChars = KEEPOUT; }
+  if (outChars > KEEPOUT && only !== LINE && only?.childNodes.length === 1 && only.firstChild.nodeType === 3) { only.firstChild.data = only.firstChild.data.slice(-KEEPOUT); outChars = KEEPOUT; }
 }
 function put(text, cls, style) { // one span of console text; `File "x.py", line 3` in a traceback becomes a link to that line
   if (!text) return;
@@ -255,7 +390,7 @@ function put(text, cls, style) { // one span of console text; `File "x.py", line
     a.textContent = p; a.dataset.file = f; a.dataset.line = l;
     span.append(a);
   });
-  $('#out').append(span);
+  $('#out').insertBefore(span, LINE);
   outChars += text.length;
   if (outChars > MAXOUT) trimOut();
 }
@@ -267,9 +402,81 @@ W.onOut = (text, cls) => {
 };
 $('#out').onclick = e => {
   const a = e.target.closest('a');
-  if (a && S.files[a.dataset.file] && !isLocked(a.dataset.file)) { openFile(a.dataset.file); gotoLine(+a.dataset.line); }
+  if (a && S.files[a.dataset.file] && !isLocked(a.dataset.file)) { openFile(a.dataset.file); gotoLine(+a.dataset.line); return; }
+  if (!LINE.hidden && !getSelection().toString()) IN.focus({ preventScroll: true }); // a click in the console means "let me type"
 };
 $('#clear').onclick = clearOut;
+
+// The typing line: an answer to input() while a program waits (wantInput: it really waits, through the service worker; or, without
+// one, the program is re-run with the answers so far), or Python at the >>> prompt once it has finished (shellLine), in the globals the
+// program left behind, like IDLE after F5. Up / Down bring back earlier entries.
+function showLine(prompt, focus) {
+  LINE.dataset.p = prompt;
+  LINE.hidden = false;
+  drainOut();
+  if (focus) IN.focus({ preventScroll: true });
+  $('#out').scrollTop = 1e9;
+}
+const hideLine = () => { LINE.hidden = true; };
+let more = ''; // an unfinished block typed at the >>> prompt (a `for` line, say): sent again with the next line
+// (the prompt takes the keyboard back if you were typing in the console: its line was hidden while the code ran, so focus fell to <body>)
+const showIdle = (focus = [IN, document.body, null].includes(document.activeElement)) => { if (ready && !job) showLine(more ? '... ' : '>>> ', focus); };
+const hist = [];
+let hpos = 0;
+function wantInput() { // the running program called input() and waits for the answer (runner.ask)
+  if (!job) return;
+  job.waiting = 'block';
+  setStatus('Waiting for your input…');
+  showLine('', true);
+}
+async function shellLine(v) {
+  out(LINE.dataset.p, 'dim');
+  out(v + '\n', 'echo');
+  const src = more ? more + '\n' + v : v;
+  if (v.trim()) { hist.push(v); hpos = hist.length; }
+  if (!src.trim()) return showIdle();
+  job = { repl: true };
+  hideLine(); setRunning(true); setStatus('Running…');
+  seen = shown = 0;
+  pyBusy = true;
+  let res = null;
+  try {
+    res = JSON.parse(await W.call('shell', { src, files: S.files, locked: Object.keys(S.files).filter(isLocked), mailbox: mailboxUrl() }));
+  } catch (e) {
+    if (e === STOPPED) return;
+    out(String(e.message || e) + '\n', 'err');
+  } finally {
+    pyBusy = false;
+  }
+  job = null;
+  setRunning(false); setStatus('Ready');
+  more = res?.more ? src : '';
+  if (res?.files) liveTrace(res.files); // calls into the program's functions update its values on the map
+  drainOut();
+  showIdle();
+}
+IN.onkeydown = e => {
+  if (!job && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && hist.length) {
+    e.preventDefault();
+    hpos = Math.max(0, Math.min(hist.length, hpos + (e.key === 'ArrowUp' ? -1 : 1)));
+    IN.value = hist[hpos] ?? '';
+    return;
+  }
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const v = IN.value;
+  IN.value = '';
+  if (job?.waiting === 'block') { // (runner.ask is waiting in the service worker's mailbox)
+    job.waiting = null;
+    hideLine(); setStatus('Running…');
+    navigator.serviceWorker.controller?.postMessage({ lib: '__input', ev: v });
+  } else if (job?.waiting === 'replay') {
+    job.waiting = null;
+    hideLine();
+    job.answers.push(v);
+    attempt();
+  } else if (!job && ready) shellLine(v);
+};
 
 // ---- editor
 const complete = c => c.showHint({ hint: cc => PyComplete.hint(cc, visibleFiles()), completeSingle: false });
@@ -279,9 +486,28 @@ const cm = CodeMirror($('#cm'), {
   extraKeys: {
     Tab: c => (c.somethingSelected() ? c.indentSelection('add') : c.replaceSelection('    ', 'end')),
     'Shift-Tab': 'indentLess', 'Ctrl-/': 'toggleComment', 'Ctrl-Enter': () => run(), F5: () => run(), 'Ctrl-S': () => {},
-    'Ctrl-Space': complete, 'Ctrl-F': 'findPersistent', 'Ctrl-H': 'replace', F3: 'findNext', 'Shift-F3': 'findPrev',
+    'Ctrl-Space': complete, 'Ctrl-F': () => openFind(false), 'Ctrl-H': () => openFind(true), F3: () => findStep(1), 'Shift-F3': () => findStep(-1),
+    Esc: () => (findOpen() ? closeFind() : CodeMirror.Pass),
   },
 });
+// Insert toggles overwrite mode (CodeMirror's default key); the cursor becomes a block (style.css) and the status bar says OVR
+cm.on('overwriteToggle', (c, on) => { $('#ovr').hidden = !on; });
+// pynodesettings.py: `# no copy paste` stops copying, cutting, pasting and dragging text; `# track pastes` writes each paste to the log
+for (const ev of ['copy', 'cut', 'paste', 'drop', 'dragstart']) {
+  cm.on(ev, (c, e) => { if (cfg().nocopy) { e.preventDefault(); setStatus('Copy and paste are turned off for this project'); } });
+}
+for (const ev of ['paste', 'drop']) IN.addEventListener(ev, e => { if (cfg().nocopy) { e.preventDefault(); setStatus('Copy and paste are turned off for this project'); } });
+cm.on('beforeChange', (c, ch) => {
+  if (ch.origin === 'paste' && cfg().pastes && S.active !== PASTES) logPaste(S.active, ch.from.line + 1, ch.text.join('\n'));
+});
+function logPaste(file, line, text) { // one line per paste in paste_log.txt: when, where, how much, and how it starts
+  const when = new Date().toLocaleString('sv').slice(0, 19), start = text.slice(0, 60).replace(/\n/g, '⏎');
+  const head = S.files[PASTES] ?? '# Every paste into the editor, written by Python Nodemap (pynodesettings.py: # track pastes)\n';
+  S.files[PASTES] = head + `${when}  ${file} line ${line}  ${text.length} characters  "${start}${text.length > 60 ? '…' : ''}"\n`;
+  docs[PASTES]?.setValue(S.files[PASTES]);
+  save();
+  if (!$('#files li[data-f="' + PASTES + '"]')) chrome();
+}
 const docOf = n => (docs[n] ||= CodeMirror.Doc(S.files[n], isPy(n) ? 'python' : null));
 cm.on('change', () => { // every edit: store it, drop the results of the last run (they no longer match), re-analyse shortly
   S.files[S.active] = cm.getValue();
@@ -291,6 +517,8 @@ cm.on('change', () => { // every edit: store it, drop the results of the last ru
   S.tl = null; S.step = null; S.error = null; S.cover = null; // the recorded run no longer matches the code
   stopPlay(); showMarks(); updateStepper();
   save();
+  if (findOpen()) findHits();
+  if (S.active === SETTINGS) applySettings();
   later(refresh, 350);
 });
 cm.on('cursorActivity', () => {
@@ -365,11 +593,14 @@ function showHints() { // draw the analyser's hints: a squiggle under the line, 
 // ---- files: explorer + tabs
 function chrome() { // re-render the tab strip, the explorer list and the map's title from S
   $('#tabs').innerHTML = S.open.map(n => `<div class="tab${n === S.active ? ' on' : ''}" data-f="${n}">${n}<b data-x="${n}">×</b></div>`).join('');
-  $('#files').innerHTML = Object.keys(S.files).sort().map(n => {
-    const lk = lockOf(n) !== null, shut = isLocked(n); // 🔒 = locked, 🔓 = locked but its password was entered this session
-    return `<li class="${n === S.active ? 'on' : ''}${shut ? ' locked' : ''}" data-f="${n}"${lk ? ` title="${shut ? 'Locked: click to enter the password' : 'A locked file, open for this session'}"` : ''}><span>${lk ? (shut ? '🔒 ' : '🔓 ') : ''}${n}</span>${shut ? '' : `<i data-ren="${n}" title="Rename">✎</i><i data-del="${n}" title="Delete">✕</i>`}</li>`;
+  $('#files').innerHTML = Object.keys(S.files).filter(n => !isHidden(n)).sort().map(n => {
+    const lk = lockOf(n) !== null, shut = isLocked(n), ro = isReadOnly(n), ghost = cfg().hide.has(n); // 🔒 = locked, 🔓 = locked but its password was entered this session
+    const tip = (ghost ? 'Hidden from students (you see it in teacher mode). ' : '') + (lk ? (shut ? 'Locked: click to enter the password' : 'A locked file, open for this session') : ro ? 'Read only: it opens, but it can\'t be changed' : '');
+    return `<li class="${n === S.active ? 'on' : ''}${shut ? ' locked' : ''}${ghost ? ' ghost' : ''}" data-f="${n}"${tip ? ` title="${tip}"` : ''}><span>${ghost ? '👻 ' : ''}${lk ? (shut ? '🔒 ' : '🔓 ') : ro ? '👁 ' : ''}${n}</span>${shut || ro ? '' : `<i data-ren="${n}" title="Rename">✎</i><i data-del="${n}" title="Delete">✕</i>`}</li>`;
   }).join('');
   $('#mapname').textContent = '· ' + S.active;
+  $('#edu').hidden = S.active !== SETTINGS; // (you can only be viewing it if it is unlocked)
+  $('#grade').hidden = S.active !== SETTINGS && !cfg().selfgrade; // `# self grade: true` puts it on every file
 }
 // remove every trace of file n (its text, document and cached results)
 const forget = n => [S.files, docs, S.trace, S.graph, S.key, S.err, S.hints, S.fold].forEach(o => delete o[n]);
@@ -392,6 +623,7 @@ function askPassword(n) { // shows the password dialog (index.html); resolves tr
   });
 }
 async function unlock(n) { // true once file n may be opened: it isn't locked, it was unlocked already, or the right password was entered
+  if (isHidden(n)) return false; // (a hidden file can't be opened at all)
   const pw = lockOf(n);
   if (pw === null || S.unlocked.has(n)) return true;
   if (pw === '') { alert(`${n} is locked and can't be opened here.`); return false; } // `# pynodemap lock` with no password seals it
@@ -405,7 +637,9 @@ function openFile(n) { // make n the active file (adding a tab if needed) and re
   if (!S.open.includes(n)) S.open.push(n);
   S.active = n;
   cm.swapDoc(docOf(n));
+  cm.setOption('readOnly', isReadOnly(n));
   chrome(); save(); showMarks(); showHints(); updateStepper(); refresh();
+  if (findOpen()) { findHits(); findStep(0); }
   if (!playT) cm.focus();
 }
 function closeTab(n) {
@@ -423,11 +657,51 @@ function askName(msg, def) { // ask for a file name: name.py (letters, digits, _
 function newFile() {
   const n = askName('New file name:', 'untitled.py');
   if (!n) return;
-  if (!(n in S.files)) S.files[n] = '';
+  if (!(n in S.files)) S.files[n] = n === GRADER ? graderTemplate() : '';
   openFile(n);
 }
+// gradeuser.py: what Grade runs when pynodesettings.py doesn't name a file. It is made from this template, importing the student's file.
+const GRADER = 'gradeuser.py';
+const studentFile = () => Object.keys(S.files).sort().find(n => isPy(n) && !isLocked(n) && ![SETTINGS, GRADER, 'education.py', cfg().grade].includes(n));
+function graderTemplate() {
+  const mod = (studentFile() || 'main.py').slice(0, -3);
+  return `"""gradeuser.py: how this project is graded. Open pynodesettings.py and press Grade to run it.
+
+Each class below is a GROUP of tests, and \`weight\` says how much the group counts (1 if a class doesn't say).
+A group's score is the share of its tests that pass; the grade is the weighted average of the groups:
+with Basics (weight 1) all passing and Harder (weight 3) half passing, the grade is (1 x 100% + 3 x 50%) / 4 = 62.5%.
+
+Give each test a docstring: its first line is what Grade shows for a test that fails (with  grade_verbose: true  in
+pynodesettings.py it also shows the test's code and what went wrong). With  self grade: true  students can press Grade
+themselves and see which of these they don't pass yet, without seeing the tests' code.
+
+Keep students from reading the tests: in pynodesettings.py add the line   # hide gradeuser.py   (and lock that file),
+or lock this one by starting a line with  # pynodemap lock  followed by a password.
+"""
+import unittest
+
+import ${mod}  # the student's file (change the name if it is a different one)
+
+
+class Basics(unittest.TestCase):
+    weight = 1
+
+    def test_example(self):
+        """Describe what this checks, for the student to read when it fails."""
+        # replace these with checks of the student's code, e.g. self.assertEqual(${mod}.add(2, 3), 5)
+        self.assertTrue(True)
+
+
+class Harder(unittest.TestCase):
+    weight = 3  # counts three times as much as Basics
+
+    def test_example(self):
+        """Adding two numbers gives their sum."""
+        self.assertEqual(2 + 3, 5)
+`;
+}
 function renameFile(old) {
-  if (isLocked(old)) return;
+  if (isProtected(old)) return;
   const n = askName('Rename to:', old);
   if (!n || n === old) return;
   if (n in S.files) return alert(n + ' already exists.');
@@ -442,7 +716,7 @@ function renameFile(old) {
   chrome(); save(); showMarks(); updateStepper(); refresh();
 }
 function deleteFile(n) {
-  if (isLocked(n)) return;
+  if (isProtected(n)) return;
   if (Object.keys(S.files).length < 2 || !firstOpenable(n)) return alert('Keep at least one file that can be opened.');
   if (!confirm(`Delete ${n}? This can't be undone.`)) return;
   forget(n);
@@ -457,6 +731,99 @@ $('#files').onclick = e => {
   const d = e.target.dataset;
   if (d.ren) renameFile(d.ren); else if (d.del) deleteFile(d.del); else if (e.target.closest('li')) openFile(e.target.closest('li').dataset.f);
 };
+
+// ---- find / replace (Ctrl+F, Ctrl+H): a bar over the editor. Every match is highlighted and the count says which one is selected;
+// Enter, ↓ or F3 go to the next, Shift+Enter, ↑ or Shift+F3 to the previous. Replace changes the selected match and moves on, All
+// changes every one in a single undo step. Matching ignores case.
+const F = { q: '', hits: [], i: -1, overlay: null }; // hits = where each match starts (character offsets into the file)
+const findOpen = () => !$('#find').hidden;
+function findHits() { // find every match of the query in the open file and highlight them
+  const q = $('#f-q').value, ql = q.toLowerCase();
+  if (F.overlay) cm.removeOverlay(F.overlay);
+  F.q = q; F.hits = []; F.overlay = null;
+  if (q) {
+    const text = cm.getValue().toLowerCase();
+    for (let i = text.indexOf(ql); i >= 0 && F.hits.length < 100000; i = text.indexOf(ql, i + ql.length)) F.hits.push(i);
+    F.overlay = {
+      token: s => {
+        const j = s.string.slice(s.pos).toLowerCase().indexOf(ql);
+        if (j === 0) { s.pos += ql.length; return 'searching'; }
+        if (j < 0) s.skipToEnd(); else s.pos += j;
+        return null;
+      },
+    };
+    cm.addOverlay(F.overlay);
+  }
+  if (F.i >= F.hits.length) F.i = F.hits.length - 1;
+  findCount();
+}
+function findCount() {
+  $('#f-n').textContent = !F.q ? '' : F.hits.length ? `${F.i + 1 || '?'} of ${F.hits.length.toLocaleString()}` : 'No results';
+  $('#f-n').classList.toggle('none', !!F.q && !F.hits.length);
+}
+function findStep(d) { // d = 1 next, -1 previous, 0 the first match at or after the cursor; selects it and scrolls to it
+  if (!findOpen()) return openFind(false);
+  const n = F.hits.length;
+  if (!n) { F.i = -1; return findCount(); }
+  if (d === 0 || F.i < 0) {
+    const at = cm.indexFromPos(cm.getCursor('from'));
+    F.i = F.hits.findIndex(h => h >= at);
+    if (F.i < 0) F.i = 0;
+  } else F.i = (F.i + d + n) % n;
+  const from = cm.posFromIndex(F.hits[F.i]), to = cm.posFromIndex(F.hits[F.i] + F.q.length);
+  cm.setSelection(from, to);
+  cm.scrollIntoView({ from, to }, 80);
+  findCount();
+}
+function openFind(replace) {
+  const sel = cm.getSelection();
+  if (sel && !sel.includes('\n')) $('#f-q').value = sel;
+  $('#find').hidden = false;
+  F.i = -1;
+  findHits();
+  findStep(0);
+  const box = replace ? $('#f-r') : $('#f-q');
+  box.focus();
+  box.select();
+}
+function closeFind() {
+  $('#find').hidden = true;
+  if (F.overlay) cm.removeOverlay(F.overlay);
+  F.overlay = null;
+  cm.focus();
+}
+function replaceOne() {
+  if (cm.getOption('readOnly') || !F.hits.length) return;
+  if (F.i < 0) return findStep(0);
+  const r = $('#f-r').value, start = F.hits[F.i];
+  cm.replaceRange(r, cm.posFromIndex(start), cm.posFromIndex(start + F.q.length), '+replace');
+  findHits();
+  F.i = F.hits.findIndex(h => h >= start + r.length); // the next match after the one just replaced
+  if (F.i < 0 && F.hits.length) F.i = 0;
+  if (F.i >= 0) { F.i = (F.i - 1 + F.hits.length) % F.hits.length; findStep(1); } else findCount();
+}
+function replaceAll() {
+  if (cm.getOption('readOnly') || !F.hits.length) return;
+  const r = $('#f-r').value, n = F.hits.length;
+  cm.operation(() => { for (let k = n - 1; k >= 0; k--) cm.replaceRange(r, cm.posFromIndex(F.hits[k]), cm.posFromIndex(F.hits[k] + F.q.length), '+replace'); });
+  F.i = -1;
+  findHits();
+  setStatus(`Replaced ${n.toLocaleString()} match${n === 1 ? '' : 'es'}`);
+}
+$('#f-q').oninput = () => { F.i = -1; findHits(); findStep(0); };
+$('#f-q').onkeydown = e => {
+  if (e.key === 'Enter' || e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); findStep(e.key === 'ArrowUp' || (e.key === 'Enter' && e.shiftKey) ? -1 : 1); }
+  else if (e.key === 'Escape') closeFind();
+};
+$('#f-r').onkeydown = e => {
+  if (e.key === 'Enter') { e.preventDefault(); e.ctrlKey || e.metaKey ? replaceAll() : replaceOne(); }
+  else if (e.key === 'Escape') closeFind();
+};
+$('#f-prev').onclick = () => findStep(-1);
+$('#f-next').onclick = () => findStep(1);
+$('#f-x').onclick = closeFind;
+$('#f-one').onclick = replaceOne;
+$('#f-all').onclick = replaceAll;
 
 // ---- node map
 let act = null, hov = null; // node under the cursor / under the mouse
@@ -584,7 +951,7 @@ let qi = 0;
 $('#q').oninput = () => { qi = 0; paint(); };
 $('#q').onkeydown = e => {
   if (e.key !== 'Enter') return;
-  const hits = [...document.querySelectorAll('#map .node.hit')];
+  const hits = [...$('#map').querySelectorAll('.node.hit')];
   if (hits.length) reveal(hits[qi++ % hits.length], true);
 };
 
@@ -602,6 +969,7 @@ function applyPrefs() {
   for (const k of ['data', 'call', 'back', 'only']) $('#w-' + k).setAttribute('aria-pressed', P[k]);
   cm.refresh();
   store(PREFS, P);
+  syncPip();
   draw(); // the node map has its own light palette
 }
 for (const k of ['data', 'call', 'back', 'only']) $('#w-' + k).onclick = () => { P[k] = !P[k]; applyPrefs(); };
@@ -647,25 +1015,32 @@ $('#s-play').onclick = () => {
 };
 
 // ---- run / stop / input
-// Python can't block waiting for input() in a worker without special server headers, so input() asks for the answer
-// and the page re-runs the program from the top, feeding it the answers collected so far (random is seeded the same).
-// job = the run in progress: its files (a snapshot), main file, mode, the input() answers so far and the random seed
+// input() waits for the line typed at the end of the console: the worker sits in a request the service worker holds until the
+// answer arrives (runner.ask, sw.js). Without a service worker (a Firefox private window, say) the program is re-run from the top
+// instead, fed the answers collected so far (random is seeded the same), and only output that wasn't shown yet is added.
+// job = the run in progress: its files (a snapshot), main file, mode, the input() answers so far, the random seed, and `waiting`
+// ('block' or 'replay' while input() wants an answer); {repl: true} while a line typed at the >>> prompt runs
 let job = null;
 const setRunning = on => { document.querySelectorAll('#run, .runmode').forEach(b => { b.disabled = on || !ready; }); $('#stop').hidden = !on; };
-async function run(mode = 'run', cover = false) { // mode = 'run', or the id of a mode a library added (doctest, unittest ...); cover = report the lines that never ran
+async function run(mode = 'run', cover = false, opts = {}) { // mode = 'run', or the id of a mode a library added (doctest, unittest, grade ...); cover = report the lines that never ran
   if (job || !ready) return;
+  hideLine();
+  more = '';
   if (!isPy(S.active) && mode === 'run') mode = PyLibs.modes().find(m => m.id === 'doctest')?.id || mode; // a text file has nothing to execute: Run runs its >>> examples
   stopPlay();
   S.tl = null; S.step = null; S.error = null; S.cover = null;
   showMarks(); updateStepper(); draw();
   PyLibs.closeViews();
   const sw = navigator.serviceWorker?.controller;
-  if (sw) PyLibs.views().forEach(l => sw.postMessage({ lib: l.name, clear: true })); // nothing left over from the last run
-  job = { files: { ...S.files }, main: S.active, mode, cover, answers: [], seed: Math.floor(Math.random() * 2 ** 31), locked: Object.keys(S.files).filter(isLocked) };
+  if (sw) [...PyLibs.views().map(l => l.name), '__input'].forEach(lib => sw.postMessage({ lib, clear: true })); // nothing left over from the last run
+  const main = opts.main || S.active;
+  // (a verbose grade shows the tests' code, so the test file is not kept locked for that run: its source has to be there to show)
+  const locked = Object.keys(S.files).filter(n => isLocked(n) && !(opts.verbose && n === opts.grade));
+  job = { files: { ...S.files }, main, mode, cover, opts, answers: [], seed: Math.floor(Math.random() * 2 ** 31), locked };
   S.ranFiles = { ...S.files };
   clearOut();
   shown = 0; sgr = {};
-  out(`▶ ${cover ? 'coverage ' : ''}${mode === 'run' ? '' : mode + ' '}${S.active}\n`, 'dim');
+  out(`▶ ${cover ? 'coverage ' : ''}${mode === 'run' ? '' : mode + ' '}${mode === 'grade' ? opts.grade : main}\n`, 'dim');
   attempt();
 }
 async function attempt() { // one execution of the job; asks for more input and returns early when input() has no answer yet
@@ -677,7 +1052,7 @@ async function attempt() { // one execution of the job; asks for more input and 
   let res = null;
   pyBusy = true;
   try {
-    res = JSON.parse(await W.call('run', { files: j.files, main: j.main, mode: j.mode, answers: j.answers, seed: j.seed, mailbox: mailboxUrl(), locked: j.locked }));
+    res = JSON.parse(await W.call('run', { files: j.files, main: j.main, mode: j.mode, answers: j.answers, seed: j.seed, mailbox: mailboxUrl(), locked: j.locked, opts: j.opts }));
   } catch (e) {
     if (e === STOPPED) return;
     out(String(e.message || e) + '\n', 'err');
@@ -685,11 +1060,10 @@ async function attempt() { // one execution of the job; asks for more input and 
     pyBusy = false;
   }
   if (job !== j) return;
-  if (res?.need_input) {
+  if (res?.need_input) { // (no service worker: the answer is collected, then the program runs again from the top)
+    j.waiting = 'replay';
     setStatus('Waiting for your input…');
-    $('#inrow').hidden = false;
-    $('#in').value = '';
-    $('#in').focus();
+    showLine('', true);
     return;
   }
   finish(res, t0);
@@ -703,30 +1077,39 @@ function finish(res, t0) { // a run ended: store its results, show the final val
   if (cover && res?.cover) { S.cover = res.cover.files; out('\n' + res.cover.report + '\n'); }
   out(`\n[${res?.gui ? 'script finished, window still open (close it or press Run to end it)' : 'finished'} in ${Math.round(performance.now() - t0)} ms]\n`, 'dim');
   drainOut(); // a run has ended: whatever it printed is on the console now, not up to 30 ms later
+  showIdle(); // ... and the >>> prompt is open on what it left behind
   const e = S.error;
   if (e && e.file !== S.active && S.files[e.file]) openFile(e.file); else { draw(); showMarks(); updateStepper(); }
   if (e && e.file === S.active) cm.scrollIntoView({ line: e.line - 1, ch: 0 }, 120);
 }
-$('#in').onkeydown = e => {
-  if (e.key !== 'Enter' || !job) return;
-  job.answers.push(e.target.value);
-  $('#inrow').hidden = true;
-  attempt();
-};
 function stop() { // kill the worker (the only way to interrupt Python), close any GUI windows and restart Python in the background
   if (!job) return;
   job = null;
-  $('#inrow').hidden = true;
+  more = '';
+  hideLine();
   PyLibs.closeViews();
   W.restart();
   out('\n■ stopped\n', 'dim');
   drainOut();
   setRunning(false);
   setStatus('Restarting Python…');
-  W.ready.then(() => { setStatus('Ready'); refresh(); });
+  W.ready.then(() => { setStatus('Ready'); refresh(); showIdle(); });
 }
 $('#run').onclick = () => run();
 $('#cov').onclick = () => run('run', true);
+// Grade (pynodesettings.py: `# grade tests.py`): run the student's file as a module, then that file's tests, and print the score
+$('#grade').onclick = () => {
+  const grade = cfg().grade || (GRADER in S.files ? GRADER : null);
+  if (!grade) {
+    clearOut();
+    out('Nothing to grade yet: make a file named gradeuser.py (it starts as a grading template), or add a line\n# grade <file>\nto pynodesettings.py.\n', 'dim');
+    return drainOut();
+  }
+  // the student's file: the open one if it is a student's .py file, else the first such file
+  const main = isPy(S.active) && !isLocked(S.active) && ![SETTINGS, GRADER, 'education.py', grade].includes(S.active) ? S.active : studentFile();
+  run('grade', false, { main: main || grade, grade, verbose: cfg().verbose });
+};
+$('#edu').onclick = () => openGuide('educators');
 for (const m of PyLibs.modes()) { // the extra run buttons that libraries add (Doctest, Tests ...)
   const b = Object.assign(document.createElement('button'), { className: 'pri runmode', textContent: m.label, title: m.title, disabled: true });
   b.onclick = () => run(m.id);
@@ -770,28 +1153,62 @@ const safeName = p => { // a file name from a path: spaces and odd characters be
   const n = base.replace(/\.(py|txt)$/i, '').replace(txt ? /[^\w-]/g : /\W/g, '_') || 'file';
   return txt ? n + '.txt' : (/^\d/.test(n) ? '_' : '') + n + '.py';
 };
-function mergeFiles(got) { // loose .py / .txt files: adds / overwrites the given files, keeps the rest
-  const names = Object.keys(got);
+function mergeFiles(got) { // adds the given files to the project, replacing those with the same name (but never a protected one)
+  const names = Object.keys(got).filter(n => !isProtected(n));
+  if (!names.length) return;
   names.forEach(n => { S.files[n] = got[n]; docs[n]?.setValue(got[n]); delete S.trace[n]; });
   S.tl = null; S.step = null; S.error = null; S.cover = null;
-  openFile(names.find(isPy) ?? names[0]);
+  applySettings();
+  const first = names.find(n => isPy(n) && !isLocked(n)) ?? names.find(n => !isLocked(n));
+  if (first) openFile(first); else chrome();
 }
 function replaceProject(got) { // a zip or a share link is a whole project: everything already in the explorer is removed
   if (job) stop();
   const names = Object.keys(got).sort();
   stopPlay();
   PyLibs.closeViews();
-  W.w.postMessage({ type: 'guireset' }); // a window left open by the old project would keep running
+  W.w?.postMessage({ type: 'guireset' }); // a window left open by the old project would keep running (no worker yet on a first visit)
   S.files = { ...got };
   for (const n of Object.keys(docs)) delete docs[n];
   Object.assign(S, { trace: {}, graph: {}, key: {}, err: {}, hints: {}, fold: {}, tl: null, step: null, views: null, error: null, cover: null, ranFiles: null });
   S.unlocked = new Set(); // a different project: its locked files are locked again
-  let first = [...(names.includes('main.py') ? ['main.py'] : []), ...names.filter(isPy), ...names].find(n => !isLocked(n));
+  // open main.py if there is one, else a .py file (not the teacher's settings), else anything that may be opened
+  let first = [...(names.includes('main.py') ? ['main.py'] : []), ...names.filter(n => isPy(n) && n !== SETTINGS), ...names].find(n => !isLocked(n));
   if (!first) { S.files['untitled.py'] = ''; first = 'untitled.py'; } // nothing but locked files
   S.open = [first];
   openFile(first);
+  applySettings();
 }
-async function importFiles(list) { // .py / .txt files are merged in; a .zip replaces the whole project (after a confirmation)
+// What an import (files, a zip or a share link) would do, in a dialog: each file it brings and what happens to it, then the choice of
+// replacing the whole project or adding these files to it. Resolves 'replace', 'add' or null (cancelled). With nothing to import it just
+// shows `note`.
+function askImport(got, how, note = '') {
+  const dlg = $('#imp-dlg'), names = Object.keys(got).sort(), mine = Object.keys(S.files).filter(n => !isHidden(n));
+  $('#imp-title').textContent = !names.length ? 'Nothing to import' : how === 'link' ? 'Open a shared project' : `Import ${names.length} file${names.length === 1 ? '' : 's'}`;
+  $('#imp-list').innerHTML = names.map(n => {
+    const what = isHidden(n) ? 'kept as it is (hidden)' : !(n in S.files) ? 'new' : S.files[n] === got[n] ? 'same as yours' : isProtected(n) ? 'yours is kept (protected)' : 'replaces yours';
+    return `<li><span>${n}</span><i>${what}</i></li>`;
+  }).join('');
+  const gone = mine.filter(n => !(n in got));
+  $('#imp-note').textContent = note || (gone.length ? `Replace removes ${gone.length > 8 ? gone.slice(0, 8).join(', ') + ', …' : gone.join(', ')}. Add keeps them.` : '');
+  $('#imp-add').hidden = $('#imp-replace').hidden = !names.length;
+  $('#imp-cancel').textContent = names.length ? 'Cancel' : 'OK';
+  const def = how === 'files' ? $('#imp-add') : $('#imp-replace'); // loose files usually join the project; a zip or a link is one
+  $('#imp-add').classList.toggle('pri', def === $('#imp-add'));
+  $('#imp-replace').classList.toggle('pri', def === $('#imp-replace'));
+  dlg.returnValue = '';
+  return new Promise(resolve => {
+    dlg.onclose = () => resolve(['replace', 'add'].includes(dlg.returnValue) ? dlg.returnValue : null);
+    dlg.showModal();
+    (names.length ? def : $('#imp-cancel')).focus();
+  });
+}
+async function bringIn(got, how) {
+  const choice = await askImport(got, how);
+  if (choice === 'replace') replaceProject(got);
+  else if (choice === 'add') mergeFiles(got);
+}
+async function importFiles(list) { // .py / .txt files, or .zip files of them: the dialog asks whether they replace the project or join it
   const got = {};
   let zipped = false;
   for (const f of list) {
@@ -803,19 +1220,8 @@ async function importFiles(list) { // .py / .txt files are merged in; a .zip rep
       }
     } else if (isFile(f.name)) got[safeName(f.name)] = await f.text();
   }
-  const names = Object.keys(got);
-  if (!names.length) return alert('No .py or .txt files found.');
-  if (zipped) {
-    const lost = Object.keys(S.files).filter(n => S.files[n] !== got[n]); // current files that will disappear or change
-    const shown = lost.slice(0, 6).join(', ') + (lost.length > 6 ? ', …' : '');
-    if (lost.length && !confirm(`Importing a zip replaces everything in the explorer with the ${names.length} file(s) from the zip.\nThese current files will be removed or changed: ${shown}.\nContinue?`)) return;
-    return replaceProject(got);
-  }
-  const shut = names.filter(isLocked);
-  if (shut.length) return alert(`${shut.join(', ')} is locked, so it can't be replaced.`);
-  const clash = names.filter(n => n in S.files && S.files[n] !== got[n]);
-  if (clash.length && !confirm(`Replace ${clash.join(', ')} with the imported version?`)) return;
-  mergeFiles(got);
+  if (!Object.keys(got).length) return askImport({}, 'files', 'There are no .py or .txt files in that.');
+  return bringIn(got, zipped ? 'zip' : 'files');
 }
 $('#imp').onclick = () => $('#pick').click();
 $('#pick').onchange = async e => { await importFiles([...e.target.files]); e.target.value = ''; };
@@ -823,9 +1229,9 @@ $('#exp').onclick = async () => { // a zip with every file and, for each .py, a 
   setStatus('Exporting…');
   const zip = new JSZip(), left = [];
   for (const [name, src] of Object.entries(S.files)) {
-    if (isLocked(name)) { left.push(name); continue; } // a locked file is not handed out
+    if (isLocked(name) && !teacher()) { left.push(name); continue; } // a locked file is not handed out (unless you are the teacher)
     zip.file(name, src);
-    if (!isPy(name)) continue;
+    if (!isPy(name) || isLocked(name)) continue;
     try {
       const g = JSON.parse(await W.call('analyze', { src, mods: modsOf() }));
       if (!g.error) zip.file(name.replace(/\.py$/, '') + '_nodemap.png', await NodeMap.png(g, S.trace[name], { light: P.light }));
@@ -866,14 +1272,77 @@ async function loadShared() { // open a #p= share link (validated: file names, s
   if (!m) return;
   history.replaceState(null, '', location.href.split('#')[0]);
   let files;
-  try { files = await unpack(m[1]); } catch { return alert("That share link couldn't be read."); }
+  try { files = await unpack(m[1]); } catch { return askImport({}, 'link', "That share link couldn't be read (it may have been cut off)."); }
   const names = Object.keys(files || {});
   if (!names.length || names.length > 50 || !names.every(n => okName(n) && typeof files[n] === 'string' && files[n].length < 500000)) {
-    return alert("That share link doesn't contain a valid project.");
+    return askImport({}, 'link', "That share link doesn't contain a valid project.");
   }
-  if (confirm(`Open a shared project (${names.join(', ')})?\nThis replaces everything currently in your explorer.`)) replaceProject(files);
+  return bringIn(files, 'link');
 }
 addEventListener('hashchange', loadShared);
+
+// ---- pop the node map out into a window of its own. Where the browser has Document Picture-in-Picture (Chrome, Edge) it floats above
+// every other window, like a video; elsewhere it is an ordinary popup. The panel itself moves there (its buttons keep working, and `$`
+// looks in that window too); closing the window, or ⤓ in it, puts it back.
+function syncPip() { // the popped-out map follows the theme and font size
+  if (!pipWin) return;
+  pipWin.document.body.className = document.body.className + ' pip';
+  pipWin.document.body.style.cssText = document.body.style.cssText;
+}
+async function popMap() {
+  if (pipWin) return pipWin.close();
+  let w = null;
+  try { w = await window.documentPictureInPicture?.requestWindow({ width: 720, height: 560 }); } catch {} // (refused: try a popup)
+  w ||= open('', 'pynodemap-map', 'popup,width=760,height=600');
+  if (!w) return setStatus("The node map couldn't be popped out: the browser blocked the window.");
+  const d = w.document, panel = $('#mapp');
+  d.title = 'Node map · Python Nodemap';
+  document.querySelectorAll('link[rel="stylesheet"], style').forEach(n => d.head.append(n.cloneNode(true)));
+  pipWin = w;
+  syncPip();
+  d.body.append(panel);
+  $('#vsplit').hidden = true;
+  $('#pop').textContent = '⤓';
+  $('#pop').title = 'Put the node map back in the page';
+  w.addEventListener('pagehide', unpopMap);
+  w.addEventListener('resize', applyZoom);
+  cm.refresh();
+  applyZoom();
+}
+function unpopMap() {
+  if (!pipWin) return;
+  const panel = pipWin.document.querySelector('#mapp');
+  pipWin = null;
+  $('#vsplit').after(panel);
+  $('#vsplit').hidden = false;
+  $('#pop').textContent = '⧉';
+  $('#pop').title = 'Pop the node map out into its own window (it stays on top of other windows where the browser allows)';
+  cm.refresh();
+  applyZoom();
+}
+$('#pop').onclick = popMap;
+addEventListener('pagehide', () => pipWin?.close());
+
+// apply pynodesettings.py: hidden files leave the tabs, read-only ones can't be typed in, the Grade button appears
+function applySettings() {
+  S.open = S.open.filter(n => n in S.files && !isLocked(n));
+  if (!S.open.length) S.open = [firstOpenable() || S.active];
+  if (isLocked(S.active)) return openFile(S.open[0]);
+  cm.setOption('readOnly', isReadOnly(S.active));
+  chrome();
+}
+
+// ---- the Tutorial (everyone) and the Educator guide (shown while pynodesettings.py is open): pages in tutorial/, in a frame that
+// follows the theme
+function openGuide(which) {
+  const url = `tutorial/${which}.html?theme=${P.light ? 'light' : 'dark'}`;
+  $('#g-title').textContent = which === 'educators' ? 'Python Nodemap for educators' : 'How Python Nodemap works';
+  $('#g-frame').src = url;
+  $('#g-tab').href = url;
+  $('#guide').showModal();
+}
+$('#tut').onclick = () => openGuide('tutorial');
+$('#g-x').onclick = () => $('#guide').close();
 
 // ---- resizable panels
 // make a splitter bar draggable: fn(pointermove) sets the CSS variable that sizes the panel
@@ -889,6 +1358,7 @@ drag($('#hsplit'), e => document.body.style.setProperty('--con-h', Math.max(60, 
 // ---- go
 $('#libs').textContent = 'Python · ' + PyLibs.names().join(', ');
 cm.swapDoc(docOf(S.active));
+cm.setOption('readOnly', isReadOnly(S.active));
 chrome();
 applyPrefs();
 const setProgress = (pct, text) => {
@@ -906,6 +1376,7 @@ W.ready.then(() => {
   setRunning(false);
   setStatus('Ready');
   refresh();
+  showIdle(false);
 }, e => {
   setStatus('Python failed to load');
   const disk = location.protocol === 'file:';

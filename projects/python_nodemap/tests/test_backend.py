@@ -779,6 +779,83 @@ def stdin_and_builtins():
     assert r["need_input"] is False and out.startswith("again? fine"), out
 
 
+def input_in_bare_except():
+    """With no mailbox, input() falls back to "re-run with the answers so far". A bare `except:` around it must not swallow that."""
+    loop = 'while True:\n  try:\n    int(input("number: "))\n  except:\n    break\nprint("done")\n'
+    for answers, need in (("[]", True), ('["5"]', True), ('["5", "7"]', True), ('["5", "x"]', False)):
+        with contextlib.redirect_stdout(io.StringIO()) as o:
+            r = json.loads(runner.run(json.dumps({"main.py": loop}), "main.py", "run", answers))
+        assert r["need_input"] is need and r["error"] is None, (answers, r["need_input"], o.getvalue())
+        assert ("done" in o.getvalue()) is (not need), o.getvalue()  # it only ends when int() gets something that isn't a number
+
+
+def console_shell():
+    """The >>> prompt runs in the globals of the module the last run ran (like IDLE after F5), in the same sandbox."""
+    def sh(src, files="{}"):
+        with contextlib.redirect_stdout(io.StringIO()) as o, contextlib.redirect_stderr(io.StringIO()) as e:
+            r = json.loads(runner.shell(src, files))
+        return r, o.getvalue(), e.getvalue()
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        runner.run(json.dumps({"main.py": "from helpers import two\nx = 40\ndef f():\n    return x + two()\n", "helpers.py": "def two():\n    return 2\n"}), "main.py")
+    assert sh("f()")[1] == "42\n"
+    assert sh("x = 1")[1] == "" and sh("f()")[1] == "3\n", "assignments stick between entries"
+    assert sh("for i in range(2):")[0]["more"] and sh("for i in range(2):\n    print(i)")[0]["more"], "a block waits for the blank line"
+    r, o, e = sh("for i in range(2):\n    print(i)\n")
+    assert not r["more"] and o == "0\n1\n", (r, o, e)
+    r, o, e = sh("1 / 0")
+    assert "ZeroDivisionError: division by zero" in e and "runner" not in e and 'File "<console>", line 1' in e, e
+    assert "SyntaxError" in sh("x y")[2]
+    assert "isn't available here" in sh("import os")[2], "the import allow-list applies at the prompt too"
+    assert r["files"]["main.py"]["calls"], "calls from the prompt are traced like the program's own"
+    runner.shell_cleanup()  # no run yet (a fresh page): the project's files can still be imported
+    r, o, e = sh("import helpers; helpers.two() * 21", json.dumps({"helpers.py": "def two():\n    return 2\n"}))
+    assert o == "42\n" and not e, (o, e)
+    with contextlib.redirect_stdout(io.StringIO()):
+        runner.run(json.dumps({"main.py": "y = 5\n"}), "main.py")
+    assert "NameError" in sh("x")[2] and sh("y")[1] == "5\n", "a new run starts a new namespace"
+
+
+def grade_mode():
+    """pynodesettings.py `# grade <file>`: the 'grade' mode runs that file's tests against the student's module and prints only the score
+    (a locked test file is served from memory, so its source never shows)."""
+    sol = "def add(a, b):\n    return a + b\n\ndef sub(a, b):\n    return a + b  # wrong\n"
+    tests = ("# pynodemap lock pw\nimport unittest\nfrom sol import add, sub\n\nclass T(unittest.TestCase):\n"
+             "    def test_add(self):\n        self.assertEqual(add(2, 3), 5)  # SECRET\n\n    def test_sub(self):\n"
+             '        """Subtracting gives the difference."""\n        self.assertEqual(sub(5, 3), 2)  # SECRET2\n')
+    txt = ">>> from sol import add, sub\n>>> add(1, 1)\n2\n>>> sub(3, 1)\n2\n"
+
+    def go(target, locked=(), verbose=False):
+        with contextlib.redirect_stdout(io.StringIO()) as o, contextlib.redirect_stderr(io.StringIO()) as e:
+            r = json.loads(runner.run(json.dumps({"sol.py": sol, "t.py": tests, "t.txt": txt}), "sol.py", "grade", "[]", 0, "",
+                                      json.dumps(list(locked)), json.dumps({"grade": target, "verbose": verbose})))
+        return r, o.getvalue() + e.getvalue()
+
+    r, out = go("t.py", ["t.py"])  # (a student's self grade: only the descriptions of what fails)
+    assert out.splitlines()[0] == "Grade: 50%" and r["error"] is None, out
+    assert out.splitlines()[1].split() == ["T", "weight", "1", "1/2", "passed", "50%"], out
+    assert out.endswith("\nNot passing yet:\n  T.test_sub: Subtracting gives the difference.\n"), out
+    assert "SECRET" not in out and "assertEqual" not in out and "!=" not in out, out
+    r, out = go("t.py", [], verbose=True)  # grade_verbose: the test's code and what went wrong
+    assert "  T.test_sub: Subtracting gives the difference.\n      def test_sub(self):\n" in out, out
+    assert "self.assertEqual(sub(5, 3), 2)  # SECRET2" in out and "AssertionError: 8 != 2" in out and "SECRET\n" not in out.replace("SECRET2", ""), out
+    r, out = go("t.txt", ["t.txt"])  # (a hidden .txt is still written to disk, for doctest to read)
+    assert out.splitlines()[0] == "Grade: 66.7%" and out.splitlines()[1].split() == ["t.txt", "weight", "1", "2/3", "passed", "66.7%"], out
+    assert out.endswith("Not passing yet:\n  t.txt, line 4\n") and "Expected" not in out, out
+    r, out = go("t.txt", ["t.txt"], verbose=True)
+    assert "  t.txt, line 4\n      Failed example:\n          sub(3, 1)\n      Expected:\n          2\n      Got:\n          4" in out, out
+    weighted = ("import unittest\nfrom sol import add, sub\n\nclass Basics(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(add(1, 1), 2)\n\n"
+                "    def test_b(self):\n        self.assertEqual(add(0, 0), 0)\n\nclass Harder(unittest.TestCase):\n    weight = 3\n\n"
+                "    def test_c(self):\n        self.assertEqual(sub(5, 3), 2)\n\n    def test_d(self):\n        self.assertEqual(add(2, 2), 4)\n")
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        runner.run(json.dumps({"sol.py": sol, "gradeuser.py": weighted}), "sol.py", "grade", "[]", 0, "", "[]", json.dumps({"grade": "gradeuser.py"}))
+    lines = o.getvalue().splitlines()
+    assert lines[0] == "Grade: 62.5%", lines  # (1 x 100% + 3 x 50%) / 4: the weight-3 group counts three times as much
+    assert lines[1].split() == ["Basics", "weight", "1", "2/2", "passed", "100%"] and lines[2].split()[:6] == ["Harder", "weight", "3", "1/2", "passed", "50%"], lines
+    r, out = go("missing.py")
+    assert out.startswith("Grade: the tests in missing.py couldn't be loaded"), out
+
+
 if __name__ == "__main__":
     runner.LIMIT = 20_000  # a smaller cutoff keeps the infinite-loop checks fast
     analyze()
@@ -800,5 +877,8 @@ if __name__ == "__main__":
     coverage_report()
     big_output()
     stdin_and_builtins()
+    input_in_bare_except()
+    console_shell()
+    grade_mode()
     enum_and_unittest()
     print("ok")

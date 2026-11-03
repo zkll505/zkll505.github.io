@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>How Python Nodemap works</title>
+        <link rel="stylesheet" href="guide.css" />
+        <script>
+            // the app passes its theme (?theme=light / dark); on its own the page follows the system
+            const t = new URLSearchParams(location.search).get('theme');
+            if (t === 'light' || (!t && matchMedia('(prefers-color-scheme: light)').matches)) document.documentElement.classList.add('light');
+        </script>
+    </head>
+    <body>
+        <main>
+            <h1>How Python Nodemap works</h1>
+            <p class="lead">
+                Write Python on the left, run it, and see your program drawn on the right: every statement as a box, with the values it
+                made and wires showing where each value came from.
+            </p>
+            <nav class="toc">
+                <b>Contents</b>
+                <ol>
+                    <li><a href="#tour">A quick tour</a></li>
+                    <li><a href="#boxes">The node map: boxes</a></li>
+                    <li><a href="#values">Values and run counts</a></li>
+                    <li><a href="#wires">Wires</a></li>
+                    <li><a href="#steps">Stepping through a run</a></li>
+                    <li><a href="#console">The console</a></li>
+                    <li><a href="#tests">Tests and coverage</a></li>
+                    <li><a href="#files">Files, sharing, importing</a></li>
+                    <li><a href="#editor">Editor tips</a></li>
+                    <li><a href="#limits">Good to know</a></li>
+                </ol>
+            </nav>
+
+            <h2 id="tour">1. A quick tour</h2>
+            <figure>
+                <img src="img/overview.webp" alt="The whole tool: files on the left, the code editor, the node map on the right and the console below" />
+                <figcaption>Files · editor · node map · console. The buttons along the top run your code in different ways.</figcaption>
+            </figure>
+            <ol>
+                <li><b>Explorer</b> (far left): your project's files. <b>+</b> makes a new one; hover a file to rename (✎) or delete (✕) it.</li>
+                <li><b>Editor</b>: write Python here. Hints (squiggles) point out likely mistakes as you type.</li>
+                <li><b>Node map</b> (right): your program as boxes and wires. It updates a moment after you stop typing.</li>
+                <li><b>Console</b> (bottom): what your program prints, answers to <code>input()</code>, and a Python prompt after a run.</li>
+                <li><b>▶ Run</b> (or <kbd>Ctrl</kbd>+<kbd>Enter</kbd>) runs the open file. <b>■ Stop</b> appears while it runs.</li>
+            </ol>
+            <p>Everything runs in your browser: nothing you write is uploaded anywhere. Your files are kept in this browser until you change them.</p>
+
+            <h2 id="boxes">2. The node map: boxes</h2>
+            <p>
+                Every statement is a <b>box</b>, in the same order as the code. The coloured label says what kind of statement it is, and
+                <code>L5</code> is its line number: click a box to jump to that line. A box <b>inside</b> another box is part of its body (the
+                lines of a function, a loop or one branch of an <code>if</code>), which is also its <b>scope</b>: a variable set inside a
+                function's box belongs to that function.
+            </p>
+            <figure>
+                <img src="img/map.webp" alt="Node map boxes: IMPORT boxes, a FUNCTION box with its parameters and return value, a RETURN box inside it, and a CLASS box" />
+                <figcaption>A function's box lists its parameters and what it returned; its <code>return</code> is a box inside it. ▾ folds a body away.</figcaption>
+            </figure>
+            <table>
+                <tr><th>Label</th><th>Statement</th></tr>
+                <tr><td>FUNCTION</td><td><code>def</code>: its value box shows the parameters of the last call and its <code>return</code></td></tr>
+                <tr><td>CLASS</td><td><code>class</code>: its methods are the boxes inside</td></tr>
+                <tr><td>LOOP</td><td><code>for</code> / <code>while</code>: shows the loop variable</td></tr>
+                <tr><td>IF · ELIF · ELSE</td><td>each branch, with the statements it runs inside</td></tr>
+                <tr><td>SET</td><td>an assignment (<code>x = …</code>, <code>self.name = …</code>)</td></tr>
+                <tr><td>RUN</td><td>a call on its own line, like <code>print(x)</code> or <code>items.append(3)</code></td></tr>
+                <tr><td>RETURN · IMPORT · TRY · CATCH · WITH · STMT</td><td>what they say; STMT is anything else (<code>pass</code>, <code>break</code> …)</td></tr>
+            </table>
+
+            <h2 id="values">3. Values and run counts</h2>
+            <p>
+                After you press Run, each box gets a dark <b>value box</b> with the variables that statement set and what they held the
+                <b>last</b> time it ran (<code>–</code> means it never ran). <b>×3</b> in a box's corner means it ran three times (for a
+                function: it was called three times; for a loop: its body repeated three times). Boxes that never ran are dimmed, which
+                is a quick way to spot code your test didn't reach.
+            </p>
+
+            <h2 id="wires">4. Wires</h2>
+            <p>
+                A wire runs from where a value is <b>made</b> to where it is <b>used</b>. It leaves a box on the right, travels down the side
+                and enters the other box on the left; the small label on it says what it carries. Hover a box (or put the editor's cursor
+                on its line) to light up just its wires.
+            </p>
+            <figure>
+                <img src="img/map-loop.webp" alt="A loop box with a dotted wire carrying i and total round the loop, and dashed call wires" />
+                <figcaption>Solid: data. Dashed: a call (↔ when it returns a value). Dotted with ↻: a value carried round a loop to its next repeat.</figcaption>
+            </figure>
+            <ul>
+                <li><b>Data</b> (solid): <code>total = add(total, i)</code> uses <code>i</code> from the loop and <code>total</code> from the line above.</li>
+                <li><b>Calls</b> (dashed orange): from the line that calls a function to the function's box; <b>↔</b> when a value comes back.</li>
+                <li><b>Loops</b> (dotted, ↻): a value one repeat of a loop hands to the next one (a running total).</li>
+            </ul>
+            <p>The <b>data / calls / loops / selected</b> buttons over the map show or hide each kind; <i>selected</i> draws only the wires of the box you are on. <b>Find variable…</b> highlights every box and wire that mentions a name. ⊟ / ⊞ fold and unfold everything; − / + / fit zoom.</p>
+            <p><b>⧉</b> (top right of the map) pops the map out into its own window, which can sit on top of other windows; ⤓ or closing it puts it back.</p>
+
+            <h2 id="steps">5. Stepping through a run</h2>
+            <figure>
+                <img src="img/steps.webp" alt="The step bar halfway through a run: the current line is highlighted in the editor and its box is outlined on the map" />
+                <figcaption>Halfway through a run: the yellow line and box are where the program is; every value box shows the values at that moment.</figcaption>
+            </figure>
+            <p>
+                After a run, the <b>step bar</b> above the map replays it one line at a time: ⏮ back to the start, |◀ one step back, ▶ play,
+                ▶| one step forward, ⏭ to the end, or drag the slider. Each box's values are the ones it had <b>right after</b> that step, so
+                you can watch a variable change round a loop. (The first 30,000 steps are recorded.)
+            </p>
+
+            <h2 id="console">6. The console</h2>
+            <figure>
+                <img src="img/console.webp" alt="The console: a program asked for a name, the answer typed after the prompt, then Python typed at the >>> prompt" />
+                <figcaption>An <code>input()</code> answered in place, then Python typed at the <code>&gt;&gt;&gt;</code> prompt after the run.</figcaption>
+            </figure>
+            <ul>
+                <li><b><code>input()</code></b>: the console shows the question; type the answer right after it and press <kbd>Enter</kbd>.</li>
+                <li>
+                    <b>The <code>&gt;&gt;&gt;</code> prompt</b>: once a run ends you can type Python into the console, and it runs with everything
+                    your program left behind: <code>list(Suit)</code>, <code>name.upper()</code>, or call your functions to try them out. An
+                    expression shows its value. A block (a <code>for</code> loop, say) shows <code>...</code> until you press Enter on an empty
+                    line. <kbd>↑</kbd> / <kbd>↓</kbd> bring back what you typed before.
+                </li>
+                <li>Errors show a traceback: click <code>File "x.py", line 3</code> to jump there.</li>
+                <li>Colours and "clear screen" codes work, so text games can redraw their board. Very long output is trimmed from the top.</li>
+            </ul>
+
+            <h2 id="tests">7. Tests and coverage</h2>
+            <figure>
+                <img src="img/tests.webp" alt="A coverage report in the console and the lines that never ran shaded red in the editor" />
+                <figcaption>Coverage: a table of how much of each file ran, and the lines that never ran shaded red.</figcaption>
+            </figure>
+            <table>
+                <tr><th>Button</th><th>What it runs</th></tr>
+                <tr><td>✓ Doctest</td><td>the <code>&gt;&gt;&gt;</code> examples in the open file's docstrings (or in a <code>.txt</code> file of examples)</td></tr>
+                <tr><td>☑ Tests</td><td>the <code>unittest</code> tests in the open file</td></tr>
+                <tr><td>◐ Coverage</td><td>runs the file, then lists the lines that never ran: write tests until there are none</td></tr>
+                <tr><td>★ Grade</td><td>if your teacher turned it on: your grade from the teacher's tests, and a description of each one you don't pass yet</td></tr>
+            </table>
+
+            <h2 id="files">8. Files, sharing, importing</h2>
+            <ul>
+                <li>Files can be <code>.py</code> (they can <code>import</code> each other: <code>import helpers</code>) or <code>.txt</code> (data for <code>open()</code>, or doctest examples).</li>
+                <li><b>Share</b> copies a link that holds your whole project. Whoever opens it gets a copy.</li>
+                <li><b>Export</b> downloads a zip of your files, with a picture of each file's node map.</li>
+                <li><b>Import</b> takes <code>.py</code> / <code>.txt</code> files or a <code>.zip</code>, and asks whether they replace your project or join it:</li>
+            </ul>
+            <figure>
+                <img src="img/import.webp" alt="The import dialog: the files coming in, which are new and which replace yours, and the Add or Replace choice" />
+            </figure>
+            <p>A file with 🔒 is locked: your teacher's tests, say. It still runs (and the Tests button runs its tests), but it opens only with its password.</p>
+
+            <h2 id="editor">9. Editor tips</h2>
+            <figure>
+                <img src="img/find.webp" alt="The find and replace bar with a match count" />
+            </figure>
+            <table>
+                <tr><th>Keys</th><th>Does</th></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd> or <kbd>F5</kbd></td><td>Run</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd> · <kbd>Ctrl</kbd>+<kbd>H</kbd></td><td>Find (with a count: "3 of 12") · find and replace. <kbd>Enter</kbd> / <kbd>↓</kbd> next, <kbd>Shift</kbd>+<kbd>Enter</kbd> / <kbd>↑</kbd> previous; All replaces every match</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>Space</kbd></td><td>Autocomplete (it also pops up as you type)</td></tr>
+                <tr><td><kbd>Ctrl</kbd>+<kbd>/</kbd></td><td>Comment / uncomment the selected lines</td></tr>
+                <tr><td><kbd>Tab</kbd> · <kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>Indent · outdent</td></tr>
+                <tr><td><kbd>Insert</kbd></td><td>Overwrite mode (a block cursor; the status bar says OVR)</td></tr>
+                <tr><td><kbd>Ctrl</kbd> + mouse wheel on the map</td><td>Zoom the map</td></tr>
+            </table>
+
+            <h2 id="limits">10. Good to know</h2>
+            <ul>
+                <li>Only a set of standard modules can be imported (listed at the bottom right of the window), plus your own files.</li>
+                <li>A program stops after 1.5 million lines (it's probably stuck in a loop); <b>Stop</b> ends any run at once.</li>
+                <li><code>tkinter</code> and <code>turtle</code> windows open inside the page, and stay open after the program ends until you close them.</li>
+                <li>A file you work on is saved in this browser only. Use Share or Export to keep a copy or hand it in.</li>
+            </ul>
+        </main>
+    </body>
+</html>

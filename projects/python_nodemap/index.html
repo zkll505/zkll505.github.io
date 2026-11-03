@@ -9,9 +9,6 @@
             href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
         <link
             rel="stylesheet"
-            href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.css" />
-        <link
-            rel="stylesheet"
             href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css" />
         <link rel="stylesheet" href="style.css" />
     </head>
@@ -37,6 +34,11 @@
                 disabled>
                 ◐ Coverage
             </button>
+            <!-- shown while pynodesettings.py is the open file (docs/SETTINGS.md): grade the work, and the educators' guide -->
+            <button id="grade" class="pri runmode" title="Grade the work: run gradeuser.py (or the file pynodesettings.py names) and show the score" hidden disabled>
+                ★ Grade
+            </button>
+            <button id="edu" title="How to use Python Nodemap with a class" hidden>🎓 Educator guide</button>
             <span class="sp"></span>
             <button id="font-down" title="Smaller text">A−</button>
             <button id="font-up" title="Larger text">A+</button>
@@ -52,6 +54,7 @@
                 title="Download a .zip of every file plus a PNG of each node map">
                 Export
             </button>
+            <button id="tut" title="How the tool works and what the node map shows">Tutorial</button>
             <a
                 id="feedback"
                 href="https://forms.gle/yK2p1S2hzGKyzfm78"
@@ -74,11 +77,28 @@
             <section id="edit">
                 <div id="tabs"></div>
                 <div id="cm"></div>
+                <!-- find / replace (Ctrl+F, Ctrl+H) -->
+                <div id="find" hidden>
+                    <div class="frow">
+                        <input id="f-q" placeholder="Find" spellcheck="false" autocomplete="off" aria-label="Find" />
+                        <span id="f-n" aria-live="polite"></span>
+                        <button class="ic" id="f-prev" title="Previous match (Shift+Enter or ↑)">↑</button>
+                        <button class="ic" id="f-next" title="Next match (Enter or ↓)">↓</button>
+                        <button class="ic" id="f-x" title="Close (Escape)">✕</button>
+                    </div>
+                    <div class="frow">
+                        <input id="f-r" placeholder="Replace" spellcheck="false" autocomplete="off" aria-label="Replace with" />
+                        <button id="f-one" title="Replace this match (Enter)">Replace</button>
+                        <button id="f-all" title="Replace every match (Ctrl+Enter)">All</button>
+                    </div>
+                </div>
             </section>
             <div id="vsplit" class="split"></div>
             <section id="mapp">
                 <div class="h">
                     NODE MAP <span id="mapname"></span><span id="maperr"></span>
+                    <span class="sp"></span>
+                    <button id="pop" title="Pop the node map out into its own window (it stays on top of other windows where the browser allows)">⧉</button>
                 </div>
                 <div class="bar2">
                     <input
@@ -170,26 +190,19 @@
         <div id="hsplit" class="split"></div>
         <section id="con">
             <div class="h">CONSOLE <button id="clear">Clear</button></div>
-            <pre id="out"></pre>
-            <div id="inrow" hidden>
-                <span>input ›</span
-                ><input
-                    id="in"
-                    autocomplete="off"
-                    spellcheck="false"
-                    placeholder="type your answer and press Enter" />
-            </div>
+            <!-- the output, and at its end the line you type on: an answer to input(), or Python at the >>> prompt (#line's data-p) -->
+            <pre id="out"><span id="line" hidden><input id="in" autocomplete="off" spellcheck="false" aria-label="Console input" /></span></pre>
         </section>
 
         <footer id="status">
             <span id="st">Loading Python…</span>
             <span id="probs" title=""></span>
             <span class="sp"></span>
+            <span id="ovr" title="Insert key: typing replaces the character under the cursor" hidden>OVR</span>
             <span id="pos"></span>
             <span id="libs"></span>
         </footer>
 
-        <!-- third-party code, from CDNs: CodeMirror 5 (the editor) and JSZip (zip import/export). Pyodide is loaded by the worker. -->
         <!-- asks for the password of a locked file (see app.js: unlock) -->
         <dialog id="pw">
             <form id="pw-form" method="dialog">
@@ -203,6 +216,31 @@
             </form>
         </dialog>
 
+        <!-- importing files, a zip or a share link: what comes in, and whether it replaces the project or joins it (app.js: askImport) -->
+        <dialog id="imp-dlg">
+            <form method="dialog">
+                <h3 id="imp-title"></h3>
+                <ul id="imp-list"></ul>
+                <p id="imp-note"></p>
+                <div class="pw-buttons">
+                    <button value="cancel" id="imp-cancel">Cancel</button>
+                    <button value="add" id="imp-add" title="Keep your files and add these (a file with the same name is replaced)">Add to my project</button>
+                    <button value="replace" id="imp-replace" title="Remove everything in the explorer and open these instead">Replace my project</button>
+                </div>
+            </form>
+        </dialog>
+
+        <!-- the Tutorial and the Educator guide: tutorial/*.html, shown in a frame (app.js: openGuide) -->
+        <dialog id="guide">
+            <div class="gbar">
+                <b id="g-title"></b>
+                <span class="sp"></span>
+                <a id="g-tab" target="_blank" rel="noopener">Open in a new tab</a>
+                <button id="g-x" title="Close (Escape)">✕</button>
+            </div>
+            <iframe id="g-frame" title="Guide"></iframe>
+        </dialog>
+
         <!-- third-party code, from CDNs: CodeMirror 5 (the editor) and JSZip (zip import/export). Pyodide is loaded by the worker. -->
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
@@ -210,9 +248,6 @@
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/comment/comment.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/searchcursor.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/search.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
         <script src="libs.js"></script>

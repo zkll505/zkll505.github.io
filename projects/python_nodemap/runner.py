@@ -7,9 +7,11 @@ Two jobs, and neither knows about any particular library (tkinter, turtle, docte
 configure(allowed_json)  -> set the import allow-list (the names of the registered libraries)
 load_lib(name, src)      -> run a library's lib.py (it may add run modes and a GUI backend; docs/ADDING_A_LIBRARY.md)
 analyze(src, mods_json)  -> JSON {nodes, wires, hints}: one node per statement, wires = data flow, hints = beginner lint
-run(files_json, main, mode, answers_json, seed)
+run(files_json, main, mode, answers_json, seed, mailbox_url, locked_json, opts_json)
                          -> JSON {files, timeline, error, need_input, gui}: values / hit counts per line plus a step timeline,
                             recorded with sys.settrace
+shell(src, files_json, locked_json, mailbox_url)
+                         -> run one entry typed at the console's >>> prompt in the namespace the last run left behind (IDLE-style)
 gui_event / gui_tick / gui_pump / gui_stop / gui_libs
                          -> the page talking to a GUI library's window (tkinter, turtle) after run() returned
 
@@ -41,7 +43,7 @@ event of the same frame (or at its "return"). That is why `last` remembers the p
 Safety limits (constants below): LIMIT traced lines (assumed infinite loop), MAXSTEPS / MAXFACTS timeline entries. Output isn't capped
 here: the page's console keeps only the newest part of it (MAXOUT in app.js).
 """
-import ast, builtins, importlib, importlib.util, json, os, random, re, shutil, sys, tempfile, traceback, types
+import ast, builtins, codeop, importlib, importlib.util, json, os, random, re, shutil, sys, tempfile, traceback, types
 
 try:
     import js  # only inside Pyodide: used to hand GUI windows to the page
@@ -404,6 +406,10 @@ def snap(frame, names, store, key):
 _LIVE = {}
 
 
+# What the last run leaves behind for the console's >>> prompt (see shell()): the same sandbox pieces as _LIVE plus `mod`, the module the
+# program ran as (its globals are the prompt's namespace) and `fail` (prints a traceback without our frames). Cleared by the next run.
+_SHELL = {}
+_OPTS = {}  # options the page passes with a run (pynodesettings.py: {"grade": "tests.py"}), what a library's _option() reads
 _MAIL = {"url": "", "ok": True}  # where the service worker's mailbox is ("" = none), and whether it has answered so far
 _BEAT = [lambda: None]  # heartbeat(): set by run() to reset the traced-line counter (see load_lib)
 _HIDDEN = []  # module names of the locked files of the current run (what a library's _locked() returns)
@@ -427,6 +433,29 @@ def mailbox(lib):
     return []
 
 
+def ask():
+    """input() that really waits: tell the page (it shows an input box at the end of the console), then wait for the answer in the
+    service worker's mailbox. The request is held there until the answer arrives (or about 20 s pass, then it is asked again).
+    None when there is no mailbox; the page then falls back to re-running the program with the answers so far."""
+    if js is None or not _MAIL["url"] or not _MAIL["ok"]:
+        return None
+    js.wantInput()
+    while True:
+        try:
+            x = js.XMLHttpRequest.new()
+            x.open("GET", f"{_MAIL['url']}?lib=__input&wait=1", False)
+            x.send()
+            ok = x.status == 200
+        except Exception:
+            ok = False
+        if not ok:
+            _MAIL["ok"] = False
+            return None
+        got = json.loads(x.responseText)
+        if got:
+            return str(got[0])
+
+
 def configure(allowed_json):
     """Set the import allow-list: the names of the registered libraries (PyLibs.names() in the page)."""
     global ALLOWED
@@ -439,7 +468,9 @@ def load_lib(name, src):
     # _mailbox(), _heartbeat() and _locked() are handed to every library (docs/ADDING_A_LIBRARY.md): events that arrived while the program
     # was busy; "I am still making progress" (an animation that keeps updating its window is not an infinite loop); and the module
     # names of the project's locked files (the unittest library runs the tests in them)
-    ns = {"__name__": name + "_lib", "_mailbox": lambda: mailbox(name), "_heartbeat": lambda: _BEAT[0](), "_locked": lambda: list(_HIDDEN)}
+    # (and _option(key): an option the page passed with this run, such as the file a Grade run tests)
+    ns = {"__name__": name + "_lib", "_mailbox": lambda: mailbox(name), "_heartbeat": lambda: _BEAT[0](), "_locked": lambda: list(_HIDDEN),
+          "_option": lambda k, d=None: _OPTS.get(k, d)}
     exec(compile(src, f"<lib {name}>", "exec"), ns)
     if "install" in ns:
         ns["install"]()  # e.g. register fake modules in sys.modules
@@ -452,12 +483,52 @@ def load_lib(name, src):
 
 
 def gui_cleanup():
-    """The last GUI window is gone: delete the temp project folder and the project modules kept alive for its callbacks."""
-    if _LIVE:
-        shutil.rmtree(_LIVE.get("root"), ignore_errors=True)
-        for m in _LIVE.get("mods", ()):
+    """The last GUI window is gone: its callbacks need the sandbox no more (the folder and modules stay for the console, see _SHELL)."""
+    _LIVE.clear()
+
+
+def shell_cleanup():
+    """Forget what the last run left behind: its temp project folder and its modules (a new run or a new project starts clean)."""
+    if _SHELL:
+        shutil.rmtree(_SHELL.get("root"), ignore_errors=True)
+        for m in _SHELL.get("mods", ()):
             sys.modules.pop(m, None)
-        _LIVE.clear()
+        _SHELL.clear()
+
+
+def shell(src, files_json="{}", locked_json="[]", mailbox_url=""):
+    """One entry typed at the console's >>> prompt, run like Python's own REPL (an expression's value is printed) in the globals of the
+    module the last run ran, inside the same sandbox, so `list(Rank)` works after running klondike.py. With no run yet, an empty program
+    is run first to set the sandbox up. JSON {more, files}: more = the code isn't complete yet (the page shows "... " and sends it again
+    with the next line); files = the traces, which calls into the project's functions keep updating."""
+    try:
+        code = codeop.compile_command(src, "<console>", "single")
+    except (SyntaxError, OverflowError, ValueError) as e:
+        sys.stderr.write("".join(traceback.format_exception_only(type(e), e)))
+        return json.dumps({"more": False})
+    if code is None:
+        return json.dumps({"more": True})
+    if not _SHELL:
+        files = {**json.loads(files_json), "__console__.py": ""}
+        run(json.dumps(files), "__console__.py", "run", "[]", random.randrange(2 ** 31), mailbox_url, locked_json)
+    _MAIL.update(url=mailbox_url, ok=True)
+    sh = _SHELL
+    sh["reset"]()
+    sh["enter"]()
+    try:
+        exec(code, sh["mod"].__dict__)
+    except SystemExit:
+        pass
+    except NeedInput:
+        sys.stderr.write("input() at the >>> prompt needs a browser that can wait for your answer (this one can't: a private window?).\n")
+    except StepLimit as e:
+        sys.stderr.write(f"{e}\n")
+    except BaseException as e:
+        if not any(isinstance(e, g["exit"]) for g in GUI.values()):
+            sh["fail"](e)
+    finally:
+        sh["leave"]()
+    return json.dumps({"more": False, "files": sh["T"]})
 
 
 PRAGMA = re.compile(r"#\s*pragma:?\s*no\s*cover", re.I)
@@ -524,15 +595,18 @@ def cover_of(T, files):
     return {"files": {n: m for n, _, m in rows}, "report": cover_report(rows)} if rows else None
 
 
-def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="", locked_json="[]"):
+def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="", locked_json="[]", opts_json="{}"):
     """Run 'main' with line tracing: as __main__, or (for a mode added by a library, e.g. doctest) as a module handed to that mode."""
     files, answers = json.loads(files_json), json.loads(answers_json)
     locked, hidden = set(json.loads(locked_json)) - {main}, {}  # locked = file names the user may not open; hidden = their source by module name
     _MAIL.update(url=mailbox_url, ok=True)
+    _OPTS.clear()
+    _OPTS.update(json.loads(opts_json))
     random.seed(seed)  # same seed on every re-run, so replaying input() answers repeats the same random numbers
     for g in GUI.values():
         g["reset"]()  # closes any window left by the previous run
     gui_cleanup()
+    shell_cleanup()
     root = tempfile.mkdtemp()
     mods = {n[:-3] for n in files if n.endswith(".py")}
     names = list(files)
@@ -541,9 +615,11 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
     _BEAT[0] = lambda: step.__setitem__(0, 0)  # a library calls this when the program shows it is alive: restart the infinite-loop count
     # timeline: steps = [file index, line, ...], facts as described in the module docstring; over[0] = the step cap was hit;
     # cur = (file, line) being executed (to place an error at the right spot)
-    steps, facts, over, cur = [], [], [False], [None, 0]  # timeline: steps = [file, line, ...]
+    # asked[0] = input() had no answer and raised NeedInput (re-run fallback): every later line raises it again, so a bare `except:`
+    # around input() can't swallow it and loop
+    steps, facts, over, cur, asked = [], [], [False], [None, 0], [False]  # timeline: steps = [file, line, ...]
     for name, src in files.items():
-        if name in locked:  # kept in memory only (see Hidden) and out of the trace
+        if name in locked and name.endswith(".py"):  # kept in memory only (see Hidden) and out of the trace (a text file has to be on disk)
             hidden[name[:-3]] = src
             continue
         path = os.path.join(root, name)
@@ -591,6 +667,8 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
                     steps.append(ln)
                 else:
                     over[0] = True
+                if asked[0]:
+                    raise NeedInput("")
                 step[0] += 1
                 if step[0] > LIMIT:
                     raise StepLimit(f"Stopped after {LIMIT:,} lines - is there an infinite loop?")
@@ -617,7 +695,7 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
                 raise ImportError(f"'{top}' isn't available here. You can import: " + ", ".join(ALLOWED + tuple(sorted(mods - {main[:-3]}))))
         return real_import(name, globals, locals, fromlist, level)
 
-    def ui_input(msg=""):  # replaces input(): answers come from the page, which re-runs the program when one is missing
+    def ui_input(msg=""):  # replaces input(): waits for the answer typed in the console (ask), or re-runs with the answers so far
         sys.stdout.write(str(msg))
         sys.stdout.flush()
         if sys.stdin is not saved["stdin"]:  # the program gave itself a stream (sys.stdin = io.StringIO("D\nQ\n")): read that, as input() does
@@ -625,9 +703,13 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
             if not line:
                 raise EOFError("EOF when reading a line")
             return line.rstrip("\n")
-        if not answers:
-            raise NeedInput(str(msg))
-        v = str(answers.pop(0))
+        if answers:
+            v = str(answers.pop(0))
+        else:
+            v = ask()
+            if v is None:
+                asked[0] = True
+                raise NeedInput(str(msg))
         sys.stdout.write(v + "\n")
         return v
 
@@ -731,17 +813,16 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
     finally:
         gui = not need and any(g["active"]() for g in GUI.values())
         leave()
-        if gui:
-            def reset():
-                step[0] = 0
+        def reset():
+            step[0] = 0
+            asked[0] = False
 
+        _SHELL.update(enter=enter, leave=leave, reset=reset, T=T, step=step, root=root, mods=mods, mod=mod, fail=fail)
+        if gui:
             _LIVE.update(enter=enter, leave=leave, reset=reset, T=T, step=step, root=root, mods=mods)
         else:
             for g in GUI.values():
                 g["finish"]()  # the script ended without mainloop(): its windows close, like real Tk
-            for m in mods | {"__main__"}:
-                sys.modules.pop(m, None)
-            shutil.rmtree(root, ignore_errors=True)
     return json.dumps({"files": T, "error": err, "need_input": need, "gui": gui, "cover": cover_of(T, files),
                        "timeline": {"files": names, "steps": steps, "facts": facts, "trunc": over[0]}})
 
@@ -804,7 +885,8 @@ def gui_libs():
     return json.dumps(list(GUI))
 
 
-def gui_stop():  # close every window and drop its timers (the page replaced the project)
+def gui_stop():  # close every window and drop its timers, and forget the last run (the page replaced the project)
     for g in GUI.values():
         g["reset"]()
     gui_cleanup()
+    shell_cleanup()

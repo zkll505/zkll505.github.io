@@ -1,0 +1,33 @@
+/* The Tutorial and the Educator guide (tutorial.html, educators.html). Shown in a frame in the app, or on their own.
+   Dark by default; ?theme=light (the app passes its theme) or the system's light preference switches to light. */
+:root {
+  --bg: #1e1e1e; --panel: #252526; --text: #d4d4d4; --dim: #9a9a9a; --line: #3a3a3a; --accent: #4fc1ff; --code: #2d2d2d; --key: #ffd866;
+  color-scheme: dark;
+}
+:root.light {
+  --bg: #ffffff; --panel: #f3f3f3; --text: #2b2b2b; --dim: #666; --line: #dcdcdc; --accent: #0066bf; --code: #f0f0f0; --key: #8a5a00;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 "Segoe UI", system-ui, sans-serif; }
+main { max-width: 860px; margin: 0 auto; padding: 24px 24px 64px; }
+h1 { font-size: 26px; margin: 0 0 6px; }
+h2 { font-size: 19px; margin: 36px 0 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+h3 { font-size: 16px; margin: 22px 0 6px; }
+p, li { max-width: 72ch; }
+a { color: var(--accent); }
+.lead { color: var(--dim); margin-top: 0; }
+nav.toc { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 18px; margin: 18px 0; }
+nav.toc ol { margin: 4px 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+code, kbd { font-family: Consolas, "Cascadia Mono", monospace; font-size: .92em; background: var(--code); border-radius: 3px; padding: 1px 5px; }
+kbd { border: 1px solid var(--line); color: var(--key); }
+pre { background: var(--code); border-radius: 6px; padding: 10px 14px; overflow-x: auto; font: 13px/1.5 Consolas, "Cascadia Mono", monospace; }
+figure { margin: 14px 0 20px; }
+figure img { display: block; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; }
+figcaption { color: var(--dim); font-size: 13px; margin-top: 6px; }
+table { border-collapse: collapse; margin: 10px 0 16px; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 5px 12px 5px 0; border-bottom: 1px solid var(--line); }
+th { color: var(--dim); font-weight: 600; }
+.note { background: var(--panel); border-left: 3px solid var(--accent); padding: 8px 14px; border-radius: 0 6px 6px 0; margin: 14px 0; }
+.swatch { display: inline-block; width: 28px; height: 0; vertical-align: middle; margin-right: 6px; }
+@media (max-width: 640px) { nav.toc ol { columns: 1; } main { padding: 16px; } }

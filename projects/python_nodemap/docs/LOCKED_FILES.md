@@ -11,6 +11,7 @@ Put one comment line in the file:
 # pynodemap lock my_password
 ```
 
+- To hide a file completely (not even listed), or to make one read only, use a `pynodesettings.py` file: see [SETTINGS.md](SETTINGS.md).
 - Only `.py` files can be locked (a `.txt` is not an importable module, so there is nothing to hide it behind).
 - It can be anywhere in the file; the top is the usual place. Spacing and case don't matter (`#pynodemap  LOCK ...` works).
 - The **password is the rest of the line** (spaces inside it are kept, the ends are trimmed). Passwords are case-sensitive.
@@ -28,7 +29,9 @@ Put one comment line in the file:
 - The node map, the value boxes, the step bar and autocomplete know nothing about it.
 - It can't be replaced by importing a `.py` file of the same name, and nothing from inside it is offered by autocomplete (its module
   name can still be imported, like any file's).
-- It is left out of **Export** (the zip), which a student would otherwise unzip and read.
+- It is left out of **Export** (the zip), which a student would otherwise unzip and read, unless its password has been entered (then it is
+  yours to export), or you are in teacher mode (the password of `pynodesettings.py` entered: Export takes every file; see
+  [SETTINGS.md](SETTINGS.md)).
 
 ## What you do
 

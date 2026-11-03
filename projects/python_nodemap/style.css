@@ -22,9 +22,27 @@ button.pri { background: #0e639c; color: #fff; }
 button.pri:hover:not(:disabled) { background: #1177bb; }
 button.stop { background: #c42b1c; color: #fff; }
 button.stop:hover { background: #d93a2b; }
-/* the password dialog for locked files */
-dialog#pw { background: var(--side); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 16px 18px; min-width: 300px; }
-dialog#pw::backdrop { background: rgba(0, 0, 0, .45); }
+/* the dialogs: the password of a locked file, and importing */
+dialog#pw, dialog#imp-dlg { background: var(--side); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 16px 18px; min-width: 300px; }
+dialog#pw::backdrop, dialog#imp-dlg::backdrop { background: rgba(0, 0, 0, .45); }
+#imp-dlg { width: min(520px, 92vw); }
+/* the Tutorial / Educator guide window */
+dialog#guide { width: min(1000px, 94vw); height: 90vh; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--side); color: var(--text); overflow: hidden; }
+dialog#guide[open] { display: flex; flex-direction: column; }
+dialog#guide::backdrop { background: rgba(0, 0, 0, .5); }
+.gbar { flex: none; display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 16px; border-bottom: 1px solid var(--line); }
+.gbar a { color: var(--dim); font-size: 12px; }
+#g-frame { flex: 1; width: 100%; border: 0; background: var(--bg); }
+#files li.ghost span { opacity: .65; font-style: italic; } /* a hidden file, listed because you are in teacher mode */
+#imp-dlg h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+#imp-list { list-style: none; margin: 0; padding: 0; max-height: 40vh; overflow: auto; border: 1px solid var(--line); border-radius: 3px; }
+#imp-list:empty { display: none; }
+#imp-list li { display: flex; gap: 12px; justify-content: space-between; padding: 4px 10px; }
+#imp-list li:nth-child(odd) { background: var(--bg); }
+#imp-list li span { font-family: Consolas, "Cascadia Mono", monospace; overflow: hidden; text-overflow: ellipsis; }
+#imp-list li i { font-style: normal; color: var(--dim); white-space: nowrap; }
+#imp-note { margin: 10px 0 0; color: var(--dim); }
+#imp-note:empty { display: none; }
 #pw p { margin: 0 0 10px; }
 #pw input { width: 100%; }
 #pw #pw-err { color: #f48771; margin: 8px 0 0; }
@@ -63,7 +81,19 @@ input:focus { outline: 1px solid #0078d4; border-color: transparent; }
 #files li:hover i { opacity: .7; }
 #files li i:hover { opacity: 1; }
 
-#edit { flex: 1; min-width: 160px; display: flex; flex-direction: column; min-height: 0; }
+#edit { flex: 1; min-width: 160px; display: flex; flex-direction: column; min-height: 0; position: relative; }
+/* the find / replace bar (Ctrl+F, Ctrl+H), over the top right of the editor */
+#find { position: absolute; top: 38px; right: 18px; z-index: 8; display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; background: var(--side); border: 1px solid var(--line); border-radius: 4px; box-shadow: 0 4px 14px rgba(0, 0, 0, .35); }
+#find[hidden] { display: none; }
+#find .frow { display: flex; align-items: center; gap: 4px; }
+#find input { width: 200px; font-family: Consolas, "Cascadia Mono", monospace; }
+#find button { padding: 2px 8px; font-size: 12px; }
+#find .ic { min-width: 26px; padding: 2px 6px; background: transparent; color: var(--text); }
+#find .ic:hover { background: var(--hover); }
+#f-n { min-width: 74px; font-size: 12px; color: var(--dim); text-align: center; }
+#f-n.none { color: #f48771; }
+.cm-searching { background: rgba(234, 92, 0, .33); border-radius: 2px; }
+body.light .cm-searching { background: rgba(234, 92, 0, .22); }
 #tabs { height: 35px; flex: none; display: flex; overflow-x: auto; background: var(--side); }
 .tab { display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; cursor: pointer; white-space: nowrap; background: var(--tab); color: var(--dim); border-right: 1px solid var(--side); border-top: 1px solid transparent; }
 .tab.on { background: var(--bg); color: var(--text); border-top-color: #0078d4; }
@@ -80,6 +110,8 @@ input:focus { outline: 1px solid #0078d4; border-color: transparent; }
 /* node map panel */
 #mapp { width: var(--map-w, 600px); flex: none; display: flex; flex-direction: column; min-width: 0; background: #10141b; }
 #mapp .h { background: var(--bg); justify-content: flex-start; }
+/* the node map popped out into its own window (app.js: popMap): the panel fills it */
+body.pip #mapp { width: 100%; flex: 1; min-height: 0; }
 #mapname { color: var(--text); text-transform: none; }
 #maperr { color: #f48771; text-transform: none; letter-spacing: 0; }
 .bar2, #steps { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 5px 10px; background: var(--side); border-bottom: 1px solid var(--line); }
@@ -115,13 +147,17 @@ input:focus { outline: 1px solid #0078d4; border-color: transparent; }
 #out a { color: #4fc1ff; text-decoration: underline; cursor: pointer; }
 body.light #out .err { color: #cd3131; }
 body.light #out a { color: #0066bf; }
-#inrow { flex: none; display: flex; align-items: center; gap: 8px; padding: 5px 14px; border-top: 1px solid var(--line); background: var(--side); }
-#inrow[hidden] { display: none; }
-#inrow span { color: #ffd866; font-family: Consolas, monospace; }
-#inrow input { flex: 1; font-family: Consolas, "Cascadia Mono", monospace; }
+#out .echo { color: var(--text); }
+/* the line you type on, at the very end of the output: right after input()'s prompt, or after ">>> " (data-p) */
+#line[hidden] { display: none; }
+#line::before { content: attr(data-p); color: #6a737d; }
+#in { font: inherit; color: inherit; background: transparent; border: 0; padding: 0; margin: 0; outline: 0; min-width: 30ch; width: 60%; caret-color: #ffd866; }
+body.light #in { caret-color: #000; }
 
 #status { height: 22px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 10px; background: #007acc; color: #fff; font-size: 12px; }
 #probs { cursor: default; }
+#ovr { font-weight: 600; }
+#ovr[hidden], #grade[hidden], #edu[hidden] { display: none; }
 #probs:empty { display: none; }
 
 /* CodeMirror 5 as VS Code Dark+ / Light+ */
@@ -132,6 +168,9 @@ body.light #out a { color: #0066bf; }
 .cm-s-vscode .CodeMirror-activeline-background { background: #282828; }
 .cm-s-vscode .CodeMirror-activeline .CodeMirror-linenumber { color: #c6c6c6; }
 .cm-s-vscode .CodeMirror-cursor { border-left: 2px solid #aeafad; }
+/* overwrite mode (the Insert key): a block cursor over the character that typing replaces */
+.CodeMirror .CodeMirror-overwrite .CodeMirror-cursor { border-left: 0; width: 1ch; background: rgba(174, 175, 173, .55); }
+.cm-s-vscode-light .CodeMirror-overwrite .CodeMirror-cursor { background: rgba(0, 0, 0, .35); }
 .cm-s-vscode .CodeMirror-selected, .cm-s-vscode.CodeMirror-focused .CodeMirror-selected { background: #264f78; }
 .cm-s-vscode .CodeMirror-matchingbracket { color: inherit !important; outline: 1px solid #888; }
 .cm-s-vscode .cm-keyword { color: #c586c0; }
@@ -174,14 +213,10 @@ body.light .err-widget { color: #cd3131; }
 .lint-dot { width: 9px; height: 9px; margin: 6px 0 0 4px; border-radius: 50%; background: #cca700; }
 .lint-dot.error { background: #f14c4c; }
 
-/* editor popups: autocomplete, find/replace */
+/* editor popups: autocomplete */
 .CodeMirror-hints { background: var(--side); border: 1px solid var(--line); box-shadow: 0 2px 8px rgba(0, 0, 0, .4); font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; z-index: 50; }
 .CodeMirror-hint { color: var(--text); padding: 1px 8px; }
 li.CodeMirror-hint-active { background: #094771; color: #fff; }
-.CodeMirror-dialog { background: var(--side); color: var(--text); border-bottom: 1px solid var(--line); padding: 4px 10px; }
-.CodeMirror-dialog input { color: var(--text); background: var(--input); border: 1px solid var(--line); font-family: Consolas, monospace; }
-.CodeMirror-dialog button { font-size: 12px; }
-.cm-searching { background: rgba(255, 213, 0, .35); }
 
 /* node map panel in the light theme (the SVG itself switches palette in nodemap.js) */
 body.light #mapp { background: #f4f6fa; }

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Python Nodemap for educators</title>
+        <link rel="stylesheet" href="guide.css" />
+        <script>
+            const t = new URLSearchParams(location.search).get('theme');
+            if (t === 'light' || (!t && matchMedia('(prefers-color-scheme: light)').matches)) document.documentElement.classList.add('light');
+        </script>
+    </head>
+    <body>
+        <main>
+            <h1>Python Nodemap for educators</h1>
+            <p class="lead">
+                Hand out an assignment as a single link, with tests students can run but not read, settings that discourage copying, and a
+                grade at the press of a button. Nothing needs installing and there are no accounts: everything runs in the student's
+                browser. (For the tool itself, see the <a href="tutorial.html">Tutorial</a>.)
+            </p>
+            <nav class="toc">
+                <b>Contents</b>
+                <ol>
+                    <li><a href="#steps">An assignment in six steps</a></li>
+                    <li><a href="#locks">Locked files</a></li>
+                    <li><a href="#settings">pynodesettings.py</a></li>
+                    <li><a href="#teacher">Teacher mode</a></li>
+                    <li><a href="#grading">Grading with gradeuser.py</a></li>
+                    <li><a href="#students">What students can run</a></li>
+                    <li><a href="#map">Teaching with the node map</a></li>
+                    <li><a href="#limits">What it does not protect</a></li>
+                </ol>
+            </nav>
+            <div class="note">
+                The sample project every new visitor starts with has a locked file, <code>education.py</code>, with this guide in short.
+                Its password is <code>teach</code>.
+            </div>
+
+            <h2 id="steps">1. An assignment in six steps</h2>
+            <ol>
+                <li><b>Write the starter code</b> the students get (<code>klondike.py</code>, say), plus any <code>.txt</code> data or doctest files.</li>
+                <li><b>Make <code>gradeuser.py</code></b> (the <b>+</b> in the explorer). It starts out as a grading template: groups of tests with weights (see <a href="#grading">Grading</a>).</li>
+                <li><b>Make <code>pynodesettings.py</code></b> with the settings you want, one comment line each, and <b>lock it</b> with a password of your own.</li>
+                <li><b>Share</b>: the link holds every file, locked and hidden ones included. Post it for the class.</li>
+                <li>Students work in their browser and hand the work back with <b>Share</b> (a link) or <b>Export</b> (a zip).</li>
+                <li>Open a student's link or zip (<b>Import</b> → Replace my project), open <code>pynodesettings.py</code> with your password, and press <b>★ Grade</b>.</li>
+            </ol>
+
+            <h2 id="locks">2. Locked files</h2>
+            <p>A <code>.py</code> file with this line (anywhere in it) can't be opened without the password that follows:</p>
+            <pre># pynodemap lock my_password</pre>
+            <figure>
+                <img src="img/password.webp" alt="The password dialog that appears when a locked file is clicked" />
+                <figcaption>Clicking a 🔒 file asks for its password. It stays open for the rest of the session (🔓); a reload locks it again.</figcaption>
+            </figure>
+            <ul>
+                <li>A locked file <b>still runs</b>: students can <code>import</code> it, and the ☑ Tests button runs the <code>unittest</code> tests in locked files too, without ever showing their source, not even in a traceback.</li>
+                <li><code># pynodemap lock</code> with no password seals a file: nobody can open it in the tool.</li>
+                <li>Locked files are left out of a student's Export, but kept in Share links (that is how an assignment travels).</li>
+            </ul>
+
+            <h2 id="settings">3. pynodesettings.py</h2>
+            <p>One setting per comment line. Lock the file, or students can open it and switch the settings off.</p>
+            <pre># pynodemap lock my_password
+# no copy paste
+# track pastes
+# hide gradeuser.py answers.txt
+# read only test_klondike.txt
+# grade gradeuser.py</pre>
+            <table>
+                <tr><th>Line</th><th>What it does</th></tr>
+                <tr><td><code># no copy paste</code></td><td>No copying, cutting, pasting or dragging text in the editor; no pasting in the console.</td></tr>
+                <tr><td><code># track pastes</code></td><td>Every paste into the editor is logged in <code>paste_log.txt</code> (time, file, line, size, how the text starts). The log is read only, can't be deleted, and comes back with the student's Share or Export.</td></tr>
+                <tr><td><code># hide &lt;files&gt;</code></td><td>Those files aren't listed at all and can't be opened (they still run and import). Hiding needs the settings file to be locked: otherwise anyone counts as the teacher.</td></tr>
+                <tr><td><code># read only &lt;files&gt;</code></td><td>Those files open but can't be changed, renamed or deleted (👁).</td></tr>
+                <tr><td><code># self grade: true</code></td><td>★ Grade is on every file, so students can grade themselves against your hidden tests and see which ones fail (by their descriptions).</td></tr>
+                <tr><td><code># grade_verbose: true</code></td><td>Grade also shows each failing test's code and what went wrong. Off (the default), it shows only each test's description: the first line of its docstring.</td></tr>
+                <tr><td><code># grade &lt;file&gt;</code></td><td>The file ★ Grade runs. Without this line it runs <code>gradeuser.py</code>. A <code>.txt</code> of <code>&gt;&gt;&gt;</code> examples works too (each example is one test).</td></tr>
+            </table>
+            <p>Lines that aren't settings are ignored, so you can leave notes in the file. Changes apply as soon as you type them.</p>
+
+            <h2 id="teacher">4. Teacher mode</h2>
+            <figure>
+                <img src="img/settings.webp" alt="Teacher mode: pynodesettings.py open, the Grade and Educator guide buttons in the toolbar, a hidden file shown with a ghost, and a grade in the console" />
+                <figcaption>With <code>pynodesettings.py</code> unlocked: the hidden <code>gradeuser.py</code> is listed again (👻), and ★ Grade and 🎓 Educator guide are in the toolbar.</figcaption>
+            </figure>
+            <p>Once you've entered the password of <code>pynodesettings.py</code> (in this browser tab):</p>
+            <ul>
+                <li><b>Hidden files are listed again</b>, marked 👻, and you can open and edit them.</li>
+                <li><b>Export takes every file</b>, locked and hidden ones included, so you can keep or pass on the full assignment.</li>
+                <li><b>★ Grade</b> and <b>🎓 Educator guide</b> appear while <code>pynodesettings.py</code> is the open file.</li>
+            </ul>
+            <p>Reloading the page ends teacher mode. A locked file you unlock on its own (a test file, say) is also included in your Export.</p>
+
+            <h2 id="grading">5. Grading with gradeuser.py</h2>
+            <p>
+                Make a file named <code>gradeuser.py</code> and it starts as this template, already importing the student's file. Each
+                <code>unittest.TestCase</code> class is a <b>group</b>, and <code>weight</code> says how much it counts (1 if a class doesn't say):
+            </p>
+            <figure>
+                <img src="img/gradeuser.webp" alt="The gradeuser.py template in the editor" />
+            </figure>
+            <pre>class Basics(unittest.TestCase):
+    weight = 1
+
+    def test_add(self):
+        self.assertEqual(klondike.add(2, 3), 5)
+
+
+class Harder(unittest.TestCase):
+    weight = 3          # counts three times as much as Basics
+
+    def test_sub(self):
+        self.assertEqual(klondike.sub(5, 3), 2)</pre>
+            <p>
+                A group's score is the share of its tests that pass; the grade is the <b>weighted average</b> of the group scores:
+                <code>sum(weight × score) / sum(weight)</code>. ★ Grade prints the grade and a line per group, with the tests that don't
+                pass yet, and nothing of the tests' code:
+            </p>
+            <pre>Grade: 62.5%
+  Basics  weight 1    2/2 passed    100%
+  Harder  weight 3    1/2 passed     50%   not yet: test_sub</pre>
+            <p>
+                After the groups, Grade lists every test that doesn't pass yet by its <b>description</b>, the first line of the test's
+                docstring, so write one for each test. With <code># self grade: true</code> students can run this themselves: they see which
+                checks they fail without seeing how they are checked. <code># grade_verbose: true</code> adds each failing test's code and the
+                failure (<code>AssertionError: 8 != 2</code>), for you, or for a class where the tests needn't be secret.
+            </p>
+            <pre>Not passing yet:
+  Harder.test_sub: Subtracting a bigger number gives a negative result.</pre>
+            <p>Hide <code>gradeuser.py</code> in the settings (or lock it) so students can't read the tests. The student's file runs first, then the tests import it, as they would in plain Python.</p>
+
+            <h2 id="students">6. What students can run themselves</h2>
+            <ul>
+                <li><b>▶ Run</b>, <b>✓ Doctest</b> (examples in docstrings or a <code>.txt</code>), <b>☑ Tests</b> (unittest, locked test files included) and <b>◐ Coverage</b> (a <code>coverage report -m</code> style table, with lines that never ran shaded red).</li>
+                <li>Locked test files let students check their work as often as they like without seeing the tests: a good fit for "make all the tests pass" labs.</li>
+                <li><code>input()</code> is answered in the console, and after a run the console is a <code>&gt;&gt;&gt;</code> prompt with the program's variables, like IDLE.</li>
+            </ul>
+
+            <h2 id="map">7. Teaching with the node map</h2>
+            <ul>
+                <li><b>Scope and structure</b>: boxes inside boxes are bodies, so a function's local variables visibly live inside it.</li>
+                <li><b>Tracing</b>: the step bar replays a run line by line with every value at that moment. Ask "what is <code>total</code> after the third pass?" and let students find it.</li>
+                <li><b>Dead code and missed cases</b>: boxes that never ran are dimmed, and Coverage shades the lines.</li>
+                <li><b>Data flow</b>: wires show where each value comes from; the <i>selected</i> filter isolates one line's inputs and outputs.</li>
+                <li><b>On a projector</b>: ⧉ pops the map into its own window, and A− / A+ change the editor's text size.</li>
+            </ul>
+
+            <h2 id="limits">8. What it does not protect</h2>
+            <p>
+                Locks and settings are a classroom deterrent, not security. Everything runs in the student's browser, so someone who knows
+                how can read a share link or the browser's storage, switch settings off there, or edit the paste log. They stop casual
+                peeking and copying and make the honest path the easy one; keep an answer key you really need private out of what you hand
+                out. Very long share links can be cut off by some chat apps: send a zip (Export) instead.
+            </p>
+        </main>
+    </body>
+</html>

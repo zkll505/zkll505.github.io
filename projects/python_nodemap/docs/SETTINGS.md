@@ -1,0 +1,80 @@
+# Project settings (pynodesettings.py)
+
+A teacher can put a file called **`pynodesettings.py`** in a project to change how the tool behaves for whoever opens it. Each
+setting is one comment line. Lock the file like any other (`# pynodemap lock <password>`, see [LOCKED_FILES.md](LOCKED_FILES.md)),
+so students can't read or change it; the settings apply all the same. Send the project out as a share link or a zip, as usual.
+
+```python
+# pynodemap lock my_password
+# no copy paste
+# track pastes
+# hide gradeuser.py answers.txt
+# read only test_klondike.txt
+```
+
+| Line | What it does |
+| --- | --- |
+| `# no copy paste` | Copying, cutting, pasting and dragging text are blocked in the editor, and pasting in the console. The status bar says so when someone tries. |
+| `# track pastes` | Every paste into the editor is written to **`paste_log.txt`**: the time, the file and line, how many characters, and how the text starts. The log is read only and can't be deleted, and it travels with Export and Share, so it comes back with the work. |
+| `# grade <file>` | The file **★ Grade** runs (see Grading below). Without this line Grade runs `gradeuser.py`. |
+| `# self grade: true` | **★ Grade** is on every file, not just this one, so students can grade themselves against the (hidden or locked) tests as often as they like and see which tests they don't pass yet. `false`, or no line, keeps it on this file only. |
+| `# grade_verbose: true` | For each failing test Grade also shows the test's code and what went wrong (the assertion, expected and actual values). With `false`, or no line, it shows only each test's **description**: the first line of its docstring. |
+| `# hide <files>` | Those files don't show up at all: not in the explorer, the tabs, autocomplete or traceback links, and they can't be opened. They still run and can be imported, like locked files, and a student's Export leaves them out. Hiding only works when this file is locked (see Teacher mode). |
+| `# read only <files>` | Those files open but can't be changed, renamed or deleted (👁 in the explorer). |
+
+Don't hide `pynodesettings.py` itself unless you mean to: a hidden file can't be opened in the tool at all, even by you (keep your own
+copy, change that, and import the whole project again with **Replace my project**, since Add never overwrites a hidden file). Locking
+it is usually what you want.
+
+## Teacher mode
+
+Once the password of `pynodesettings.py` has been entered (in this browser tab), you are the teacher until the page is reloaded:
+
+- hidden files are listed again, marked 👻, and open like any other file;
+- **Export** puts every file in the zip, locked and hidden ones included;
+- while `pynodesettings.py` is the open file, the toolbar shows **★ Grade** and **🎓 Educator guide** (with `# self grade: true`, Grade is
+  on every file for everyone).
+
+If `pynodesettings.py` has no lock line, everyone is in teacher mode, so lock it.
+
+## Grading
+
+**★ Grade** runs the student's file as a module, then the tests in `gradeuser.py` (or the file a `# grade` line names), and prints the
+grade and one line per group, never the tests' code:
+
+```
+Grade: 62.5%
+  Basics  weight 1    2/2 passed    100%
+  Harder  weight 3    1/2 passed     50%   not yet: test_sub
+```
+
+Each `unittest.TestCase` class is a **group**, and a class attribute `weight = 3` makes a group count three times as much as one with the
+default weight of 1. A group's score is the share of its tests that pass; the grade is `sum(weight x score) / sum(weight)`. A `.txt`
+file of `>>>` examples is one group, each example a test.
+
+After the groups comes a list of the tests that don't pass yet. By default each is shown by its description, the first line of its
+docstring, so give every test one that says what it checks:
+
+```
+Not passing yet:
+  Harder.test_sub: Subtracting a bigger number gives a negative result.
+```
+
+With `# grade_verbose: true` each one also shows the test's code and the failure (`AssertionError: 8 != 2`); for that run the test file is
+not kept locked, since its code is what is shown. Leave it off for `# self grade` if the tests should stay secret. In a `.txt` doctest
+file a failing example is shown by its line number, or with verbose, as doctest reports it (the example, what was expected, what came).
+
+Make a file named **`gradeuser.py`** (the **+** in the explorer) and it starts as a template of two weighted groups, with a described
+example test in each, that already imports the student's file. Hide it (`# hide gradeuser.py`) or lock it so students can't read the
+tests.
+
+## Details
+
+Names in a list are separated by spaces or commas. Case and spacing don't matter (`# No Copy/Paste` works); a comment line that isn't one
+of these is ignored, so you can write notes in the file too. Changes apply as soon as the file changes.
+
+## What this is not
+
+Like locked files, these settings are a classroom convenience, not security. Everything runs in the student's browser, and someone
+who knows how can read the project's files from the browser's storage or from the share link, switch the settings off there, or edit
+the paste log the same way. They stop casual copying and peeking, and they make the honest path the easy one.

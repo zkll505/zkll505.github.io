@@ -62,7 +62,8 @@ are pushed by the worker whenever it likes.
 | --- | --- | --- |
 | page → worker | `init {url, runner, libs, allowed, sizes}` | Download and start Pyodide, run `runner.py`, `configure()`, `load_lib()` each library. |
 | page → worker | `analyze {src, mods}` | Static analysis of one file. Reply `{id, result}` with the JSON string. |
-| page → worker | `run {files, main, mode, answers, seed, mailbox, locked}` | Run a program (`mailbox` is the URL of the service worker's mailbox, or `''`; `locked` lists the files the user may not open). Reply `{id, result}` with the JSON string. |
+| page → worker | `run {files, main, mode, answers, seed, mailbox, locked, opts}` | Run a program (`mailbox` is the URL of the service worker's mailbox, or `''`; `locked` lists the files the user may not open, hidden ones included; `opts` are options for a library's mode, such as the file Grade tests). Reply `{id, result}` with the JSON string. |
+| page → worker | `shell {src, files, locked, mailbox}` | A line typed at the console's `>>>` prompt (`runner.shell`). Reply `{id, result}`: `{more, files}`. |
 | page → worker | `guievent {lib, ev}` | The user did something in a library's window (no reply of its own; frames come back as `gui`). |
 | page → worker | `guireset` | The project was replaced: stop the windows and their timers. |
 | worker → page | `{id, result}` or `{id, error}` | The reply to a request. |
@@ -70,6 +71,7 @@ are pushed by the worker whenever it likes.
 | worker → page | `progress {loaded, total}` | Bytes of Pyodide downloaded so far, for the loading bar. |
 | worker → page | `gui {lib, tree}` | A frame for that library's view; `tree: null` means close everything. |
 | worker → page | `trace {files}` | New values for the node map after a window callback ran. |
+| worker → page | `input` | The program is waiting in `input()`: open the console's typing line (the answer goes back through the service worker). |
 
 ## Analysis (`analyze`)
 
@@ -106,9 +108,19 @@ bounded: 1.5 M traced lines (assumed infinite loop), 30,000 recorded steps, 400 
 The page shows either the aggregate (finished) or `NodeMap.viewAt(timeline, n)` (stepping), which replays the facts up to
 step *n*.
 
-**`input()`** can't block inside a worker without special HTTP headers (SharedArrayBuffer), so it raises `NeedInput`; the page
-shows an input box, then calls `run` again with the answers collected so far. Output already shown is skipped, and `random`
-is seeded identically each time, so the program behaves the same up to the point it asked.
+**`input()`** really waits. `ask()` calls the worker's `wantInput()` (flush the output, so the prompt shows; post `input` to the page,
+which opens the typing line at the end of the console), then makes a synchronous request to the service worker's mailbox
+(`__mailbox?lib=__input&wait=1`). `sw.js` holds that request open until the page posts the line that was typed, or for 20 s, after
+which the worker simply asks again. A synchronous request in a worker blocks only the worker, so this needs no special HTTP headers
+(SharedArrayBuffer would). Without a service worker it falls back to the old way: `input()` raises `NeedInput`, the page collects the
+answer and calls `run` again with every answer so far (output already shown is skipped, `random` is seeded identically). So that a
+bare `except:` around `input()` can't swallow `NeedInput` and loop, the tracer raises it again on every line after the first.
+
+**The `>>>` prompt** (`shell()`): at the end of every run the sandbox pieces are kept in `_SHELL` (enter / leave, the traces, the temp
+folder, the module the program ran as). A line typed at the prompt is compiled with `codeop.compile_command(..., "single")` (an
+expression's value is printed; `None` back means "incomplete", and the page shows `... `) and executed in that module's globals inside
+the same sandbox, still traced, so calls into the program update the map. With no run yet, an empty program is run first to set the
+sandbox up. The next run (or a new project, `gui_stop`) deletes the folder and the modules (`shell_cleanup`).
 
 **Modes**: `run(..., mode)` with a mode id a library registered (`doctest`, `unittest`) imports the file as a module and hands
 it to that library's function instead of running it as `__main__`.
@@ -171,8 +183,8 @@ handled after it finishes.
 Two related rules live in the same place. `update()` on a destroyed window raises `TclError` (and turtle turns that into
 `Terminator`), so closing the window during a loop ends the program as in the real modules; and `update()` calls `_heartbeat()`,
 which resets the traced-line counter, because an animation that keeps drawing is not the infinite loop that `LIMIT` is there to catch
-(Stop still works). Libraries get `_mailbox()` and `_heartbeat()` in their namespace (see the library guide). `input()` still uses the
-re-run trick; the mailbox could carry its answers too, but a blocking `input()` needs a wait, which a synchronous poll can't do cheaply.
+(Stop still works). Libraries get `_mailbox()` and `_heartbeat()` in their namespace (see the library guide). The same mailbox carries
+`input()`'s answers, with one difference: that request is held until the answer comes (see Running and tracing).
 
 ## Locked files
 
@@ -234,8 +246,31 @@ so a test that sets `builtins.input = ...` can't break the next run.
 
 `localStorage`: `python_nodemap.v1` (files, open tabs, active file) and `python_nodemap.prefs` (theme, font size, zoom, wire
 filters). A share link is `#p=` plus the project as JSON, deflated (`CompressionStream`, falling back to uncompressed) and
-base64url-encoded; it lives in the URL fragment, so it is never sent to a server. Opening one asks for confirmation and
-**replaces** the whole project, as does importing a zip; importing loose `.py` / `.txt` files only adds them.
+base64url-encoded; it lives in the URL fragment, so it is never sent to a server. Opening one, like any import, shows the import
+dialog (`askImport`): what comes in and what happens to each file, then **Replace** (`replaceProject`) or **Add** (`mergeFiles`, which
+never overwrites a locked, hidden or read-only file). A link opened on a first visit can be accepted before the Python worker exists
+(start-up waits for the service worker), which is why `replaceProject` must not assume `W.w` is there.
+
+## The rest of the page
+
+- **Find / replace** (`openFind` and friends in `app.js`): matches are character offsets into the file (case ignored), highlighted
+  with one CodeMirror overlay; Replace All is a single `cm.operation`, so one Undo takes it back.
+- **The console's typing line** (`#line`, an `<input>` inside the `<pre>`) is always its last child, so it sits right after a prompt;
+  `put()` inserts output before it and `trimOut()` never removes it. `job.waiting` says what Enter does: answer a held `input()`
+  (`'block'`), re-run with one more answer (`'replay'`), or, with no job, send the line to `shell()`.
+- **Popping the map out** (`popMap`): the `#mapp` panel itself moves into a Document Picture-in-Picture window (or a popup where the
+  browser has none), with the page's stylesheets cloned. Its handlers move with it; `$` looks in that window too, and `syncPip` copies
+  the theme. Closing it (`pagehide`) moves the panel back.
+- **pynodesettings.py** (`cfg()`, re-parsed when the file changes; [SETTINGS.md](SETTINGS.md)): hidden files count as locked
+  (`isLocked`) and are filtered out of the explorer; read-only ones set CodeMirror's `readOnly`; `isProtected` covers both plus locked
+  files for rename, delete and import. `teacher()` is true once the settings file itself is open to you (its password entered, or no
+  lock): then `isHidden` is false (the files show with 👻) and Export skips nothing. It goes by the settings file's password rather
+  than any locked file's, because a student can lock a file of their own. Grade (shown only while the settings file is open) is the
+  unittest library's `grade` mode, told which file to test through `run(..., opts_json)` and `_option()`; it groups tests by TestCase
+  class and weights them by the class's `weight`. A new file named `gradeuser.py` is filled from `graderTemplate()`.
+- **The guides**: `tutorial/tutorial.html` and `tutorial/educators.html` are plain pages (with `guide.css` and `img/`), shown in a
+  `<dialog>` frame by `openGuide()` with the app's theme in `?theme=`. The screenshots are taken from the tool itself; retake them after
+  a visible change. The sample project (`STARTER`) carries `education.py`, locked with the password `teach`.
 
 ## Browser differences we hit
 

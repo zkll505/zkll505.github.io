@@ -27,13 +27,24 @@ your browser's `localStorage`.
   clickable.
 - **Safe to run**: a **Stop** button (the program runs in a Web Worker), an infinite-loop cutoff, a console that keeps only its newest
   output, and an import allow-list.
-- **`input()`** works (the page asks for the answer in the console), and a program that gives itself a stream to read
+- **An interactive console**: `input()` is answered right where it asks, at the end of the console, and the program really waits
+  for it. After a run the console is a Python prompt (`>>>`) in what the program left behind, like IDLE after F5: type
+  `list(Rank)` after running a file that defines `Rank`. A program that gives itself a stream to read
   (`sys.stdin = io.StringIO("D\nQ\n")`) gets its input from that, which is how a test can play a whole game. ANSI colours and
   "clear screen" in a program's output work too, so a text game can redraw its board.
 - **Projects**: export a zip of every file plus a PNG of each `.py` map, import a zip, or share the whole project as a link. A project
   can also hold plain-text `.txt` files, such as a doctest file (`test_klondike.txt`).
 - **Locked files**: a `# pynodemap lock <password>` line makes a file unopenable without the password, so an assignment can carry
   tests the student can run (the **Tests** button, or `import`) but not read. See [docs/LOCKED_FILES.md](docs/LOCKED_FILES.md).
+- **Project settings for teachers**: a `pynodesettings.py` file of comment lines can turn off copy and paste, log every paste, hide
+  files completely, or make files read only. While it is open (with its password), a **Grade** button scores the work against a test
+  file such as `gradeuser.py`, which starts as a template of weighted test groups, and Export takes every file. See
+  [docs/SETTINGS.md](docs/SETTINGS.md).
+- **Tutorials**: the **Tutorial** button explains the tool and the node map with screenshots; the **Educator guide** (shown while
+  `pynodesettings.py` is open) covers assignments, locks, settings and grading. A new visitor's sample project also has a locked
+  `education.py` with notes for teachers: its password is `teach`.
+- **Find and replace** with a match count, and the node map can be **popped out** into its own window (picture-in-picture where the
+  browser has it, so it floats above the editor or another app).
 - **Libraries** (each one is a plug-in, see below): `random`, `math`, `time`, `enum`, `pathlib`, `typing`, `sys`, `io`, `builtins`,
   `contextlib`, `collections`, `copy`, `re`, `itertools`, `functools`, `string`, `doctest`, `unittest`, `tkinter` (GUI windows) and `turtle`.
 
@@ -74,10 +85,10 @@ Other things worth knowing:
 - **Text files** (`.txt`) are kept with the project and written next to the `.py` files on every run, so `open("data.txt")` and
   `doctest.testfile("test_klondike.txt")` find them. They get no node map or hints; **Run** (or **Doctest**) on one runs the `>>>`
   examples in it.
-- **Share** copies a link that contains the whole project (it lives in the part after `#`, so no server ever sees it). Opening
-  one asks first, then **replaces** everything in the explorer. **Import** takes `.py` and `.txt` files (added to the project) or a
-  `.zip` (replaces the project, after asking; anything in it that isn't a `.py` or `.txt` is skipped). **Export** downloads a zip of every
-  file plus a PNG of each `.py` file's node map.
+- **Share** copies a link that contains the whole project (it lives in the part after `#`, so no server ever sees it). **Import**
+  takes `.py` and `.txt` files or a `.zip` of them (anything else in it is skipped). Both open a dialog listing what comes in and what
+  happens to each file, with the choice of **Replace my project** or **Add to my project** (files with the same name are replaced;
+  locked, hidden and read-only ones are kept). **Export** downloads a zip of every file plus a PNG of each `.py` file's node map.
 - **Doctest** and **Tests** buttons (next to Run) import the active file and run its `>>>` examples or its `unittest` tests (on a
   `.txt` file, Doctest runs the examples in the file itself).
 - **Coverage** (next to them) runs the active file like Run, then prints a table like `coverage report -m` (statements, how many
@@ -86,7 +97,11 @@ Other things worth knowing:
   `# pragma: no cover` leaves a line, or a whole `def` / `if`, out). To measure a test file, run the `.py` file whose `__main__` block
   runs it, or open the `.txt` and press Coverage. Editing a file clears the shading.
 - **Stop** ends a run immediately by restarting Python in the background (a couple of seconds; the files are cached).
-- `input()` shows an input box in the console. See [Limits](#limits) for how this works and what it means for your program.
+- **The console**: when a program calls `input()`, type the answer right after its prompt and press Enter. Once a run ends, the
+  console shows `>>>`: type Python there and it runs in the program's globals (an expression's value is printed, a block such as a
+  `for` loop ends with an empty line, ↑ / ↓ bring back earlier lines). **Stop** ends a line that runs forever.
+- **⧉** at the top of the node map pops it out into its own window; ⤓ there, or closing that window, puts it back.
+- **Insert** switches to overwrite mode: the cursor becomes a block and the status bar says OVR.
 - The status bar shows the number of hints (hover for the list), the cursor position and which libraries are available.
 
 ### Keyboard shortcuts
@@ -95,7 +110,11 @@ Other things worth knowing:
 | --- | --- |
 | Ctrl+Enter, F5 | Run the active file |
 | Ctrl+Space | Autocomplete (it also pops up as you type) |
-| Ctrl+F · F3 / Shift+F3 · Ctrl+H | Find · next / previous match · replace |
+| Ctrl+F · Ctrl+H | Find (with a match count) · find and replace |
+| Enter / ↓ · Shift+Enter / ↑ (in the find box), F3 / Shift+F3 | Next · previous match |
+| Enter · Ctrl+Enter (in the replace box) | Replace this match · replace all |
+| Insert | Overwrite mode on / off |
+| ↑ / ↓ at the `>>>` prompt | Earlier / later lines typed there |
 | Ctrl+/ | Comment or uncomment the selected lines |
 | Tab · Shift+Tab | Indent · outdent |
 | Ctrl+mouse wheel over the map | Zoom the map |
@@ -131,10 +150,10 @@ Each library, what it supports and what it doesn't: [libs/README.md](libs/README
 
 ## Limits
 
-- `input()` re-runs the program with the answers collected so far (output isn't repeated; `random` is seeded the same each
-  time). Python can't pause and wait inside a Web Worker without special server headers that GitHub Pages can't send, so this is
-  how it works everywhere. Anything else that varies between runs (the clock, `id()`) may differ between those re-runs, and
-  `input()` is not available inside GUI callbacks (use an `Entry` widget).
+- `input()` waits through the service worker (`sw.js`), which needs https or `localhost`. Where there is none (a Firefox private
+  window) the program is re-run with the answers collected so far instead: output isn't repeated and `random` is seeded the same,
+  but anything else that varies between runs (the clock, `id()`) may differ, and the `>>>` prompt can't use `input()`. `input()` is
+  not available inside GUI callbacks either way (use an `Entry` widget).
 - A GUI window stays open after the script ends, like in IDLE or Thonny; it closes with its ✕ or the next **Run**. Code after
   `mainloop()` / `turtle.done()` never runs.
 - Dialogs (`messagebox.askyesno`, `simpledialog.askstring`) can't wait for a click, so they answer immediately and say so.
@@ -183,11 +202,12 @@ index.html  style.css
 app.js          the IDE: files, editor, console, run/stop, stepping, import/export/share
 nodemap.js      layout + SVG drawing of the node map (also used for the PNG export)
 complete.js     autocomplete          worker.js   Pyodide in a Web Worker
-sw.js           service worker: a mailbox that delivers key and mouse events to a running program
+sw.js           service worker: a mailbox that delivers key and mouse events, and input() answers, to a running program
 libs.js         the library registry  runner.py   analysis + traced execution (Python)
 libs/<name>/    one folder per library: lib.js (manifest) and lib.py (optional)
 tests/          python tests/test_backend.py
-docs/           NODE_MAP.md (what each part of the map means), LOCKED_FILES.md, ARCHITECTURE.md, ADDING_A_LIBRARY.md, examples/clicker
+docs/           NODE_MAP.md (what each part of the map means), LOCKED_FILES.md, SETTINGS.md, ARCHITECTURE.md, ADDING_A_LIBRARY.md, examples/clicker
+tutorial/       tutorial.html and educators.html (the in-app guides), their screenshots (img/) and guide.css
 ```
 
 ## Tests

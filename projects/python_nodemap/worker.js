@@ -1,8 +1,10 @@
 /* Runs Pyodide in a Web Worker so the page never freezes and Stop can kill a run.
    app.js turns this function's source into a Blob worker, so it can't use outside variables.
-   Messages in:  init {url, runner, libs, allowed, sizes} | analyze | run {..., mailbox, locked} | guievent {lib, ev} | guireset
+   Messages in:  init {url, runner, libs, allowed, sizes} | analyze | run {..., mailbox, locked, opts} | shell {src, files, locked, mailbox}
+                 | guievent {lib, ev} | guireset
    (mailbox = the URL of the service worker's mailbox, or '': how the running program reads window events; see runner.mailbox)
-   Messages out: out {cls, text} | progress | gui {lib, tree} (tree null = close the windows) | trace {files} | {id, result|error} */
+   Messages out: out {cls, text} | progress | gui {lib, tree} (tree null = close the windows) | trace {files}
+                 | input (the program is waiting in input(); runner.ask) | {id, result|error} */
 function workerMain() {
   let api, cur = null, last = 0;
   const timers = {}; // one after()-timer per GUI library
@@ -18,6 +20,9 @@ function workerMain() {
     if (cur.text.length > 8192 || (text.includes('\n') && performance.now() - last > 30)) flush();
   };
   const stream = cls => { const d = new TextDecoder(); return { write: b => (emit(cls, d.decode(b, { stream: true })), b.length) }; };
+
+  // input(): show what was printed so far (the prompt), then tell the page to open the console's input box (runner.ask)
+  self.wantInput = () => { flush(); postMessage({ type: 'input' }); };
 
   // GUI libraries (tkinter, turtle): Python posts the window's tree; timers and window events are driven from here
   self.guiPost = (lib, s) => postMessage({ type: 'gui', lib, tree: JSON.parse(s) });
@@ -64,16 +69,20 @@ function workerMain() {
         ns.set('__name__', 'nm_runner'); // own namespace, so the import guard never treats runner code as user code
         py.runPython(m.runner, { globals: ns });
         api = {};
-        for (const f of ['configure', 'load_lib', 'analyze', 'run', 'gui_event', 'gui_tick', 'gui_pump', 'gui_stop', 'gui_libs']) api[f] = ns.get(f);
+        for (const f of ['configure', 'load_lib', 'analyze', 'run', 'shell', 'gui_event', 'gui_tick', 'gui_pump', 'gui_stop', 'gui_libs']) api[f] = ns.get(f);
         api.configure(JSON.stringify(m.allowed));
         for (const l of m.libs) api.load_lib(l.name, l.src); // in the order the libraries were registered
       } else if (m.type === 'analyze') {
         result = api.analyze(m.src, JSON.stringify(m.mods));
       } else if (m.type === 'run') {
         closeWindows(); // the previous program's windows must not outlive this run (also covers a tree already in flight)
-        result = api.run(JSON.stringify(m.files), m.main, m.mode, JSON.stringify(m.answers), m.seed, m.mailbox || '', JSON.stringify(m.locked || []));
+        result = api.run(JSON.stringify(m.files), m.main, m.mode, JSON.stringify(m.answers), m.seed, m.mailbox || '', JSON.stringify(m.locked || []), JSON.stringify(m.opts || {}));
         flush();
         libs().forEach(lib => guiReply(api.gui_pump(lib))); // a window left open by mainloop(): start its timers
+      } else if (m.type === 'shell') { // a line typed at the console's >>> prompt
+        result = api.shell(m.src, JSON.stringify(m.files), JSON.stringify(m.locked || []), m.mailbox || '');
+        flush();
+        libs().forEach(lib => guiReply(api.gui_pump(lib)));
       }
       postMessage({ id: m.id, result });
     } catch (e) {
