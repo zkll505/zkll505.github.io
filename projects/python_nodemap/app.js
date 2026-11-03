@@ -123,7 +123,8 @@ if __name__ == "__main__":
 # ----------------------------------------------------------------------------------------------------------------
 #   TEACHER MODE
 # ----------------------------------------------------------------------------------------------------------------
-#   Once you have entered the password of pynodesettings.py (in this browser tab), hidden files are listed again,
+#   Once you have entered the password of pynodesettings.py (in this browser tab; a password opens every file locked
+#   with it, which is how this sample's hidden settings and gradeuser.py show up), hidden files are listed again,
 #   marked with a ghost, and Export puts every file in the zip, locked and hidden ones included. The Grade and
 #   Educator guide buttons appear while pynodesettings.py is the open file. Reloading the page ends it.
 #
@@ -163,6 +164,63 @@ if __name__ == "__main__":
 #   locks and settings are a classroom deterrent, not security: someone determined can read a share link or the
 #   browser's storage. Keep real answer keys out of what you hand out if that matters.
 #   Long share links can be cut off by some chat apps; send a zip (Export) instead.
+`,
+  // the sample project's settings and grading tests: hidden from students and locked with the same password as education.py, so
+  // unlocking education.py with "teach" unlocks them too, starts teacher mode, and they show up (👻)
+  'pynodesettings.py': `# pynodemap lock teach
+# hide pynodesettings.py gradeuser.py
+#
+# Python Nodemap settings for this project, one per line (see the Educator guide, or education.py).
+# This file and gradeuser.py are hidden: they show up (marked with a ghost) once you have unlocked education.py,
+# since they share its password. Open this file and press Grade to grade main.py with gradeuser.py's tests.
+# Settings you could add (take "example:" off the front):
+#   example: # no copy paste
+#   example: # track pastes
+#   example: # self grade: true
+#   example: # grade_verbose: true
+#   example: # hide gradeuser.py
+#   example: # read only data.txt
+`,
+  'gradeuser.py': `# pynodemap lock teach
+"""gradeuser.py for the sample project: how main.py and helpers.py would be graded (hidden and locked with "teach").
+
+Open pynodesettings.py and press Grade. Each class is a group of tests; its weight says how much it counts, and the grade is the
+weighted average of the groups. A test's docstring is what Grade shows when that test fails. Try breaking add() in main.py.
+"""
+import unittest
+
+import helpers
+import main
+
+
+class Functions(unittest.TestCase):
+    weight = 1
+
+    def test_add(self):
+        """add() returns the sum of two numbers."""
+        self.assertEqual(main.add(2, 3), 5)
+        self.assertEqual(main.add(-1, 1), 0)
+
+    def test_average(self):
+        """average() returns the mean of a list."""
+        self.assertEqual(helpers.average([2, 4]), 3)
+
+
+class Dogs(unittest.TestCase):
+    weight = 2  # counts twice as much as Functions
+
+    def test_learn(self):
+        """A dog remembers every trick it learns, in order."""
+        dog = main.Dog("Fido")
+        dog.learn("sit")
+        dog.learn("roll over")
+        self.assertEqual(dog.tricks, ["sit", "roll over"])
+
+    def test_show(self):
+        """show() says the dog's name and how many tricks it knows."""
+        dog = main.Dog("Fido")
+        dog.learn("sit")
+        self.assertEqual(dog.show(), "Fido knows 1 trick(s)")
 `,
 };
 
@@ -629,6 +687,9 @@ async function unlock(n) { // true once file n may be opened: it isn't locked, i
   if (pw === '') { alert(`${n} is locked and can't be opened here.`); return false; } // `# pynodemap lock` with no password seals it
   if (!await askPassword(n)) return false;
   S.unlocked.add(n); // for this session only
+  // a password opens every file locked with it: so a settings file that hides itself (it can't be clicked) opens along with another
+  // file that shares its password, and one "teach" opens the sample project's education.py, settings and grading tests together
+  for (const f of Object.keys(S.files)) if (lockOf(f) === pw) S.unlocked.add(f);
   chrome();
   return true;
 }
@@ -1184,7 +1245,8 @@ function replaceProject(got) { // a zip or a share link is a whole project: ever
 // shows `note`.
 function askImport(got, how, note = '') {
   const dlg = $('#imp-dlg'), names = Object.keys(got).sort(), mine = Object.keys(S.files).filter(n => !isHidden(n));
-  $('#imp-title').textContent = !names.length ? 'Nothing to import' : how === 'link' ? 'Open a shared project' : `Import ${names.length} file${names.length === 1 ? '' : 's'}`;
+  $('#imp-title').textContent = !names.length ? 'Nothing to import' : how === 'link' ? 'Open a shared project' : how === 'sample' ? 'Reset to the sample project'
+    : `Import ${names.length} file${names.length === 1 ? '' : 's'}`;
   $('#imp-list').innerHTML = names.map(n => {
     const what = isHidden(n) ? 'kept as it is (hidden)' : !(n in S.files) ? 'new' : S.files[n] === got[n] ? 'same as yours' : isProtected(n) ? 'yours is kept (protected)' : 'replaces yours';
     return `<li><span>${n}</span><i>${what}</i></li>`;
@@ -1224,6 +1286,9 @@ async function importFiles(list) { // .py / .txt files, or .zip files of them: t
   return bringIn(got, zipped ? 'zip' : 'files');
 }
 $('#imp').onclick = () => $('#pick').click();
+// Reset to sample (status bar): the project a new visitor starts with, through the same dialog (Replace, or Add the sample's files to
+// yours). For anyone whose saved project dates from before the sample changed.
+$('#reset').onclick = () => bringIn(STARTER, 'sample');
 $('#pick').onchange = async e => { await importFiles([...e.target.files]); e.target.value = ''; };
 $('#exp').onclick = async () => { // a zip with every file and, for each .py, a PNG of its node map (with the values of the last run)
   setStatus('Exporting…');

@@ -156,6 +156,8 @@ body.light #in { caret-color: #000; }
 
 #status { height: 22px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 10px; background: #007acc; color: #fff; font-size: 12px; }
 #probs { cursor: default; }
+#reset { padding: 0 8px; font-size: 11px; line-height: 16px; background: transparent; color: #fff; border: 1px solid rgba(255, 255, 255, .45); }
+#reset:hover { background: rgba(255, 255, 255, .15); }
 #ovr { font-weight: 600; }
 #ovr[hidden], #grade[hidden], #edu[hidden] { display: none; }
 #probs:empty { display: none; }

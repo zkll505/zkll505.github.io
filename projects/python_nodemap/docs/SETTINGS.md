@@ -22,13 +22,16 @@ so students can't read or change it; the settings apply all the same. Send the p
 | `# hide <files>` | Those files don't show up at all: not in the explorer, the tabs, autocomplete or traceback links, and they can't be opened. They still run and can be imported, like locked files, and a student's Export leaves them out. Hiding only works when this file is locked (see Teacher mode). |
 | `# read only <files>` | Those files open but can't be changed, renamed or deleted (👁 in the explorer). |
 
-Don't hide `pynodesettings.py` itself unless you mean to: a hidden file can't be opened in the tool at all, even by you (keep your own
-copy, change that, and import the whole project again with **Replace my project**, since Add never overwrites a hidden file). Locking
-it is usually what you want.
+`pynodesettings.py` can hide itself (`# hide pynodesettings.py`). It can't be clicked then, so give it the same password as another
+locked file: a password opens **every** file locked with it, so entering it for that other file unlocks the settings too, which starts
+teacher mode and lists the settings file again (👻). The sample project does exactly that: unlocking `education.py` with `teach` also
+opens its hidden `pynodesettings.py` and `gradeuser.py` (press Grade on the settings file to see a weighted grade of the sample code).
+Without such a file, a self-hidden settings file can only be changed by importing the whole project again with **Replace my project**.
 
 ## Teacher mode
 
-Once the password of `pynodesettings.py` has been entered (in this browser tab), you are the teacher until the page is reloaded:
+Once the password of `pynodesettings.py` has been entered (in this browser tab, for that file or for any locked file with the same
+password), you are the teacher until the page is reloaded:
 
 - hidden files are listed again, marked 👻, and open like any other file;
 - **Export** puts every file in the zip, locked and hidden ones included;

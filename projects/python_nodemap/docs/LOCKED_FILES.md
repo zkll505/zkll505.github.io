@@ -29,6 +29,7 @@ Put one comment line in the file:
 - The node map, the value boxes, the step bar and autocomplete know nothing about it.
 - It can't be replaced by importing a `.py` file of the same name, and nothing from inside it is offered by autocomplete (its module
   name can still be imported, like any file's).
+- Entering a password opens every file locked with that same password, for the rest of the session.
 - It is left out of **Export** (the zip), which a student would otherwise unzip and read, unless its password has been entered (then it is
   yours to export), or you are in teacher mode (the password of `pynodesettings.py` entered: Export takes every file; see
   [SETTINGS.md](SETTINGS.md)).

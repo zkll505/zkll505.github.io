@@ -42,7 +42,8 @@ your browser's `localStorage`.
   [docs/SETTINGS.md](docs/SETTINGS.md).
 - **Tutorials**: the **Tutorial** button explains the tool and the node map with screenshots; the **Educator guide** (shown while
   `pynodesettings.py` is open) covers assignments, locks, settings and grading. A new visitor's sample project also has a locked
-  `education.py` with notes for teachers: its password is `teach`.
+  `education.py` with notes for teachers (password `teach`), plus a hidden `pynodesettings.py` and `gradeuser.py` with the same
+  password, which show up once `education.py` is unlocked (a password opens every file locked with it).
 - **Find and replace** with a match count, and the node map can be **popped out** into its own window (picture-in-picture where the
   browser has it, so it floats above the editor or another app).
 - **Libraries** (each one is a plug-in, see below): `random`, `math`, `time`, `enum`, `pathlib`, `typing`, `sys`, `io`, `builtins`,
@@ -102,6 +103,8 @@ Other things worth knowing:
   `for` loop ends with an empty line, ↑ / ↓ bring back earlier lines). **Stop** ends a line that runs forever.
 - **⧉** at the top of the node map pops it out into its own window; ⤓ there, or closing that window, puts it back.
 - **Insert** switches to overwrite mode: the cursor becomes a block and the status bar says OVR.
+- **Reset to sample** (bottom left, next to the status) brings back the sample project a new visitor starts with, after asking:
+  your saved project otherwise stays as it was, so this is how you see a newer sample.
 - The status bar shows the number of hints (hover for the list), the cursor position and which libraries are available.
 
 ### Keyboard shortcuts

@@ -64,6 +64,8 @@ def _grade(mod):
         for t in _flat(unittest.defaultTestLoader.loadTestsFromModule(tests)):
             w = getattr(type(t), "weight", 1)
             groups.setdefault(type(t).__name__, (w if isinstance(w, (int, float)) and w >= 0 else 1, []))[1].append(t)
+        order = list(vars(tests))  # the loader sorts classes by name: list the groups in the order the file defines them
+        groups = dict(sorted(groups.items(), key=lambda g: order.index(g[0]) if g[0] in order else len(order)))
         for name, (w, ts) in groups.items():
             res = unittest.TextTestRunner(stream=quiet, verbosity=0).run(unittest.TestSuite(ts))
             bad = res.failures + res.errors
