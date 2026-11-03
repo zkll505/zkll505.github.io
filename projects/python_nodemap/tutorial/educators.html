@@ -127,7 +127,8 @@
 # track pastes
 # hide gradeuser.py answers.txt
 # read only test_klondike.txt
-# grade gradeuser.py</pre
+# grade main.py gradeuser.py
+# grade helpers.py helpers_tests.txt</pre
             >
             <table>
                 <tr>
@@ -148,7 +149,7 @@
                         <code>paste_log.txt</code> (time, file, line, size, how
                         the text starts). The log is read only, can't be
                         deleted, and comes back with the student's Share or
-                        Export.
+                        Export, locked with this file's password.
                     </td>
                 </tr>
                 <tr>
@@ -184,12 +185,17 @@
                     </td>
                 </tr>
                 <tr>
-                    <td><code># grade &lt;file&gt;</code></td>
+                    <td><code># grade &lt;student&gt; &lt;tests&gt;</code></td>
                     <td>
-                        The file ★ Grade runs. Without this line it runs
-                        <code>gradeuser.py</code>. A <code>.txt</code> of
-                        <code>&gt;&gt;&gt;</code> examples works too (each
-                        example is one test).
+                        Grade that student file with those tests: a unittest
+                        file, or a <code>.txt</code> of <code>&gt;&gt;&gt;</code>
+                        examples (each one test, run with the student file's
+                        names defined). One line per file to grade; ★ Grade runs
+                        them all and shows the average. With no grade line it
+                        runs <code>gradeuser.py</code>. The sample project grades
+                        <code>main.py</code> with <code>gradeuser.py</code> and
+                        <code>helpers.py</code> with the doctests in
+                        <code>grade_helpers.txt</code>.
                     </td>
                 </tr>
             </table>

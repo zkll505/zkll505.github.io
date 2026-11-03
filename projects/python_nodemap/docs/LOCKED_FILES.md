@@ -12,7 +12,10 @@ Put one comment line in the file:
 ```
 
 - To hide a file completely (not even listed), or to make one read only, use a `pynodesettings.py` file: see [SETTINGS.md](SETTINGS.md).
-- Only `.py` files can be locked (a `.txt` is not an importable module, so there is nothing to hide it behind).
+- `.py` and `.txt` files can be locked. A locked `.txt` (a doctest file, say) can't be opened in the tool, but it is still on disk while a
+  program runs, since doctest has to read it.
+- Whenever a file with a lock line is opened, that line is folded into `# pynodemap lock ••••••` so the password isn't on screen;
+  click it (or move the cursor onto it) to see it.
 - It can be anywhere in the file; the top is the usual place. Spacing and case don't matter (`#pynodemap  LOCK ...` works).
 - The **password is the rest of the line** (spaces inside it are kept, the ends are trimmed). Passwords are case-sensitive.
 - A lock with **no password** (`# pynodemap lock` on its own) seals the file: nobody can open it in the tool. Edit it elsewhere.

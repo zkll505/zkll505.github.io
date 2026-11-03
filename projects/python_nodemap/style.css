@@ -207,6 +207,15 @@ body.light #in { caret-color: #000; }
 .cm-err { background: rgba(244, 71, 71, .2) !important; }
 .cm-miss { background: rgba(244, 135, 113, .13); box-shadow: inset 3px 0 0 #f48771; }
 body.light .cm-miss { background: rgba(205, 49, 49, .09); box-shadow: inset 3px 0 0 #cd3131; }
+/* folding by indentation (the gutter's ▸ / ▾, the ⋯ that stands for a folded block) and the folded-away password line */
+.CodeMirror-foldgutter { width: 14px; }
+.CodeMirror-foldgutter-open, .CodeMirror-foldgutter-folded { color: #6e7681; cursor: pointer; }
+.CodeMirror-foldgutter-open:after { content: "\25BE"; }
+.CodeMirror-foldgutter-folded:after { content: "\25B8"; }
+.CodeMirror-foldmarker { color: #9cdcfe; background: rgba(90, 93, 94, .35); border-radius: 3px; padding: 0 2px; font-family: inherit; text-shadow: none; cursor: pointer; }
+body.light .CodeMirror-foldmarker { color: #0451a5; background: #e8e8e8; }
+.cm-lockline { color: #6a9955; font-style: italic; cursor: pointer; }
+body.light .cm-lockline { color: #008000; }
 .err-widget { margin: 2px 0 4px; padding: 2px 10px; border-left: 3px solid #f14c4c; background: rgba(244, 71, 71, .12); color: #f48771; font: 12px Consolas, "Cascadia Mono", monospace; }
 body.light .err-widget { color: #cd3131; }
 .lint-warn { text-decoration: underline wavy #cca700; text-underline-offset: 3px; }

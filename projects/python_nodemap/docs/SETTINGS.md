@@ -15,8 +15,8 @@ so students can't read or change it; the settings apply all the same. Send the p
 | Line | What it does |
 | --- | --- |
 | `# no copy paste` | Copying, cutting, pasting and dragging text are blocked in the editor, and pasting in the console. The status bar says so when someone tries. |
-| `# track pastes` | Every paste into the editor is written to **`paste_log.txt`**: the time, the file and line, how many characters, and how the text starts. The log is read only and can't be deleted, and it travels with Export and Share, so it comes back with the work. |
-| `# grade <file>` | The file **★ Grade** runs (see Grading below). Without this line Grade runs `gradeuser.py`. |
+| `# track pastes` | Every paste into the editor is written to **`paste_log.txt`**: the time, the file and line, how many characters, and how the text starts. The log is read only and can't be deleted, and it travels with Export and Share, so it comes back with the work. On the way out it is locked with this file's password, so once imported again it opens only for you. |
+| `# grade <student file> <tests>` | Grade that student file with those tests (a `unittest` .py file, or a `.txt` of `>>>` examples). Use as many lines as there are files to grade; **★ Grade** runs them all, then shows their average. `# grade <tests>` alone grades the open file (or the first student file). With no grade line, Grade runs `gradeuser.py`. |
 | `# self grade: true` | **★ Grade** is on every file, not just this one, so students can grade themselves against the (hidden or locked) tests as often as they like and see which tests they don't pass yet. `false`, or no line, keeps it on this file only. |
 | `# grade_verbose: true` | For each failing test Grade also shows the test's code and what went wrong (the assertion, expected and actual values). With `false`, or no line, it shows only each test's **description**: the first line of its docstring. |
 | `# hide <files>` | Those files don't show up at all: not in the explorer, the tabs, autocomplete or traceback links, and they can't be opened. They still run and can be imported, like locked files, and a student's Export leaves them out. Hiding only works when this file is locked (see Teacher mode). |
@@ -42,8 +42,26 @@ If `pynodesettings.py` has no lock line, everyone is in teacher mode, so lock it
 
 ## Grading
 
-**★ Grade** runs the student's file as a module, then the tests in `gradeuser.py` (or the file a `# grade` line names), and prints the
-grade and one line per group, never the tests' code:
+**★ Grade** runs each `# grade` line in turn: the student file, then its tests (with no grade line, `gradeuser.py` against the student's
+file). With several lines each gets its own grade, and the last line is the average:
+
+```
+# grade main.py main_tests.py
+# grade helpers.py helpers_tests.txt
+```
+
+```
+== main.py with main_tests.py
+Grade: 50%
+  ...
+== helpers.py with helpers_tests.txt
+Grade: 100%
+  ...
+Overall: 75% (the average of 2 grades)
+```
+
+A `.txt` test file is run with the student file's names already defined, as if its examples were in that file's docstrings, so
+`>>> average([2, 4])` needs no import. For each grade Grade prints the grade and one line per group, never the tests' code:
 
 ```
 Grade: 62.5%

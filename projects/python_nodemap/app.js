@@ -112,9 +112,11 @@ if __name__ == "__main__":
 # ----------------------------------------------------------------------------------------------------------------
 #   # no copy paste        no copying, cutting, pasting or dragging text in the editor; no pasting in the console
 #   # track pastes         each paste into the editor goes in paste_log.txt (time, file, line, size, how it starts);
-#                          the log is read only, can't be deleted, and comes back with the student's Share / Export
-#   # grade tests.py       the file Grade runs (default: gradeuser.py if there is one); a .txt file of >>> examples
-#                          works too, each example counting as one test
+#                          the log is read only, can't be deleted, and comes back with the student's Share / Export,
+#                          locked with this file's password
+#   # grade main.py t.py   grade main.py with the tests in t.py (unittest), or in a .txt file of >>> examples (each one
+#                          test, run with main.py's names defined). As many grade lines as you like: Grade runs them
+#                          all and shows the average. With none, Grade runs gradeuser.py against the student's file
 #   # self grade: true     Grade on every file: students grade themselves and see which tests fail (by description)
 #   # grade_verbose: true  Grade also shows each failing test's code and what went wrong (default: descriptions only)
 #   # hide a.py b.txt      those files are not listed at all and can't be opened; they still run and import
@@ -168,11 +170,14 @@ if __name__ == "__main__":
   // the sample project's settings and grading tests: hidden from students and locked with the same password as education.py, so
   // unlocking education.py with "teach" unlocks them too, starts teacher mode, and they show up (👻)
   'pynodesettings.py': `# pynodemap lock teach
-# hide pynodesettings.py gradeuser.py
+# hide pynodesettings.py gradeuser.py grade_helpers.txt
+# grade main.py gradeuser.py
+# grade helpers.py grade_helpers.txt
 #
 # Python Nodemap settings for this project, one per line (see the Educator guide, or education.py).
-# This file and gradeuser.py are hidden: they show up (marked with a ghost) once you have unlocked education.py,
-# since they share its password. Open this file and press Grade to grade main.py with gradeuser.py's tests.
+# This file and the two grading files are hidden: they show up (marked with a ghost) once you have unlocked
+# education.py, since they share its password. Open this file and press Grade: it grades main.py with the unittest
+# tests in gradeuser.py, and helpers.py with the doctest examples in grade_helpers.txt, then shows the average.
 # Settings you could add (take "example:" off the front):
 #   example: # no copy paste
 #   example: # track pastes
@@ -180,6 +185,25 @@ if __name__ == "__main__":
 #   example: # grade_verbose: true
 #   example: # hide gradeuser.py
 #   example: # read only data.txt
+`,
+  'grade_helpers.txt': `# pynodemap lock teach
+Doctest grading for helpers.py, the Python Nodemap sample (hidden and locked with "teach").
+
+pynodesettings.py has the line  grade helpers.py grade_helpers.txt , so Grade runs the examples below with
+helpers.py's names already defined (no import needed). Every >>> line is one test, and a test passes when what it
+prints matches the line under it. Lines like this one, without >>>, are just notes.
+
+The mean of a list of numbers:
+>>> average([2, 4])
+3.0
+>>> average([5])
+5.0
+>>> average([1, 2, 3, 4])
+2.5
+
+It works for negative numbers too:
+>>> average([-3, 3])
+0.0
 `,
   'gradeuser.py': `# pynodemap lock teach
 """gradeuser.py for the sample project: how main.py and helpers.py would be graded (hidden and locked with "teach").
@@ -258,12 +282,13 @@ const okName = n => /^[A-Za-z_]\w*\.py$/.test(n) || /^[\w-]+\.txt$/.test(n);
 // it out. This is a soft lock for the classroom, not security: docs/LOCKED_FILES.md says what it does and doesn't protect.
 const LOCK = /^[ \t]*#[ \t]*pynodemap[ \t]+lock\b[ \t]*(.*?)[ \t]*$/im;
 S.unlocked = new Set(); // locked files whose password was entered during this session (never saved)
-const lockOf = n => { const m = isPy(n) ? LOCK.exec(S.files[n] ?? '') : null; return m ? m[1] : null; }; // its password ('' = none: sealed), or null if it isn't locked
+const lockOf = n => { const m = LOCK.exec(S.files[n] ?? ''); return m ? m[1] : null; }; // its password ('' = none: sealed), or null if it isn't locked
 // ---- pynodesettings.py: a teacher's settings for the project, one comment line each (docs/SETTINGS.md). Lock it like any other file
 // (`# pynodemap lock <password>`) so students can't change it; the settings apply all the same.
 //   # no copy paste           no copying, cutting, pasting or dragging text in the editor or the console
 //   # track pastes            every paste into the editor is written to paste_log.txt (read only, can't be deleted)
-//   # grade tests.py          the file Grade runs (unittest, or the >>> examples of a .txt); without it, gradeuser.py
+//   # grade a.py tests.py     Grade a.py with tests.py (unittest, or the >>> examples of a .txt); one line per file, all run by Grade,
+//                             then their average; `# grade tests.py` grades the open file; with no grade line, gradeuser.py
 //   # self grade: true        the Grade button is on every file, so students can grade themselves (it is otherwise only on this file)
 //   # grade_verbose: true     Grade shows the code of each failing test and what went wrong (false: only the tests' descriptions)
 //   # hide a.py notes.txt     those files don't show up at all; they still run and can be imported (like locked files)
@@ -274,7 +299,7 @@ const cfg = (() => { // the parsed settings, re-read whenever the settings file 
   return () => {
     if (S.files[SETTINGS] === src && val) return val;
     src = S.files[SETTINGS];
-    val = { nocopy: false, pastes: false, grade: null, selfgrade: false, verbose: false, hide: new Set(), readonly: new Set() };
+    val = { nocopy: false, pastes: false, grades: [], selfgrade: false, verbose: false, hide: new Set(), readonly: new Set() };
     for (const line of (src || '').split('\n')) {
       const m = /^\s*#\s*(no\s*copy\s*(?:\/|,|and|&)?\s*paste|track\s+pastes?|paste\s+tracking|self[\s_]*grade|grade[\s_]*verbose|grade|hide|hidden|read\s*only)\b\s*(.*?)\s*$/i.exec(line);
       if (!m) continue;
@@ -284,7 +309,7 @@ const cfg = (() => { // the parsed settings, re-read whenever the settings file 
       else if (key.startsWith('track') || key === 'pastetracking') val.pastes = true;
       else if (key === 'selfgrade') val.selfgrade = yes;
       else if (key === 'gradeverbose') val.verbose = yes;
-      else if (key === 'grade') val.grade = names[0] || null;
+      else if (key === 'grade' && names.length) val.grades.push(names.length > 1 ? { student: names[0], tests: names[1] } : { student: null, tests: names[0] });
       else if (key === 'hide' || key === 'hidden') names.forEach(n => val.hide.add(n));
       else names.forEach(n => val.readonly.add(n));
     }
@@ -539,11 +564,14 @@ IN.onkeydown = e => {
 // ---- editor
 const complete = c => c.showHint({ hint: cc => PyComplete.hint(cc, visibleFiles()), completeSingle: false });
 const cm = CodeMirror($('#cm'), {
-  mode: 'python', theme: 'vscode', lineNumbers: true, gutters: ['lint', 'CodeMirror-linenumbers'], indentUnit: 4,
+  // folding by indentation: the ▾ beside a line that has an indented block under it (class Dog:, def, for ...) folds that block
+  foldGutter: { rangeFinder: CodeMirror.fold.indent }, foldOptions: { rangeFinder: CodeMirror.fold.indent, widget: ' ⋯ ' },
+  mode: 'python', theme: 'vscode', lineNumbers: true, gutters: ['lint', 'CodeMirror-linenumbers', 'CodeMirror-foldgutter'], indentUnit: 4,
   matchBrackets: true, autoCloseBrackets: true, styleActiveLine: true,
   extraKeys: {
     Tab: c => (c.somethingSelected() ? c.indentSelection('add') : c.replaceSelection('    ', 'end')),
     'Shift-Tab': 'indentLess', 'Ctrl-/': 'toggleComment', 'Ctrl-Enter': () => run(), F5: () => run(), 'Ctrl-S': () => {},
+    'Ctrl-Q': c => c.foldCode(c.getCursor()), // fold / unfold the block the cursor's line starts
     'Ctrl-Space': complete, 'Ctrl-F': () => openFind(false), 'Ctrl-H': () => openFind(true), F3: () => findStep(1), 'Shift-F3': () => findStep(-1),
     Esc: () => (findOpen() ? closeFind() : CodeMirror.Pass),
   },
@@ -567,6 +595,22 @@ function logPaste(file, line, text) { // one line per paste in paste_log.txt: wh
   if (!$('#files li[data-f="' + PASTES + '"]')) chrome();
 }
 const docOf = n => (docs[n] ||= CodeMirror.Doc(S.files[n], isPy(n) ? 'python' : null));
+// A file's `# pynodemap lock <password>` line shows the password, so each time a file is opened that line is folded away into
+// "# pynodemap lock ••••••" (whether or not it was open before). Clicking it, or moving the cursor onto it, shows it again.
+const LOCKLINE = /^[ \t]*#[ \t]*pynodemap[ \t]+lock\b/i;
+function foldLockLines(doc) {
+  doc.getAllMarks().forEach(m => m.lockLine && m.clear());
+  doc.eachLine(h => {
+    if (!LOCKLINE.test(h.text)) return;
+    const line = doc.getLineNumber(h), el = document.createElement('span');
+    el.className = 'cm-lockline';
+    el.textContent = '# pynodemap lock ••••••';
+    el.title = 'The password is hidden: click to show it';
+    const m = doc.markText({ line, ch: 0 }, { line, ch: h.text.length }, { replacedWith: el, clearOnEnter: true, inclusiveLeft: false, inclusiveRight: false });
+    m.lockLine = true;
+    el.onmousedown = e => { e.preventDefault(); m.clear(); };
+  });
+}
 cm.on('change', () => { // every edit: store it, drop the results of the last run (they no longer match), re-analyse shortly
   S.files[S.active] = cm.getValue();
   const tagged = lockOf(S.active) !== null; // typing (or deleting) the lock tag in the open file: it stays open until the page is reloaded
@@ -698,6 +742,7 @@ function openFile(n) { // make n the active file (adding a tab if needed) and re
   if (!S.open.includes(n)) S.open.push(n);
   S.active = n;
   cm.swapDoc(docOf(n));
+  foldLockLines(cm.getDoc());
   cm.setOption('readOnly', isReadOnly(n));
   chrome(); save(); showMarks(); showHints(); updateStepper(); refresh();
   if (findOpen()) { findHits(); findStep(0); }
@@ -723,7 +768,7 @@ function newFile() {
 }
 // gradeuser.py: what Grade runs when pynodesettings.py doesn't name a file. It is made from this template, importing the student's file.
 const GRADER = 'gradeuser.py';
-const studentFile = () => Object.keys(S.files).sort().find(n => isPy(n) && !isLocked(n) && ![SETTINGS, GRADER, 'education.py', cfg().grade].includes(n));
+const studentFile = () => Object.keys(S.files).sort().find(n => isPy(n) && !isLocked(n) && ![SETTINGS, GRADER, 'education.py', ...cfg().grades.map(g => g.tests)].includes(n));
 function graderTemplate() {
   const mod = (studentFile() || 'main.py').slice(0, -3);
   return `"""gradeuser.py: how this project is graded. Open pynodesettings.py and press Grade to run it.
@@ -1096,12 +1141,12 @@ async function run(mode = 'run', cover = false, opts = {}) { // mode = 'run', or
   if (sw) [...PyLibs.views().map(l => l.name), '__input'].forEach(lib => sw.postMessage({ lib, clear: true })); // nothing left over from the last run
   const main = opts.main || S.active;
   // (a verbose grade shows the tests' code, so the test file is not kept locked for that run: its source has to be there to show)
-  const locked = Object.keys(S.files).filter(n => isLocked(n) && !(opts.verbose && n === opts.grade));
+  const locked = Object.keys(S.files).filter(n => isLocked(n) && !(opts.verbose && opts.grades?.some(g => g[1] === n)));
   job = { files: { ...S.files }, main, mode, cover, opts, answers: [], seed: Math.floor(Math.random() * 2 ** 31), locked };
   S.ranFiles = { ...S.files };
   clearOut();
   shown = 0; sgr = {};
-  out(`▶ ${cover ? 'coverage ' : ''}${mode === 'run' ? '' : mode + ' '}${mode === 'grade' ? opts.grade : main}\n`, 'dim');
+  out(`▶ ${cover ? 'coverage ' : ''}${mode === 'run' ? '' : mode + ' '}${mode === 'grade' ? opts.grades.map(g => g[1]).join(', ') : main}\n`, 'dim');
   attempt();
 }
 async function attempt() { // one execution of the job; asks for more input and returns early when input() has no answer yet
@@ -1158,17 +1203,19 @@ function stop() { // kill the worker (the only way to interrupt Python), close a
 }
 $('#run').onclick = () => run();
 $('#cov').onclick = () => run('run', true);
-// Grade (pynodesettings.py: `# grade tests.py`): run the student's file as a module, then that file's tests, and print the score
+// Grade: every `# grade [student.py] tests` line of pynodesettings.py in turn (with none, gradeuser.py), then their average.
+// A line that names no student file grades the open file if it is a student's .py file, else the first such file.
 $('#grade').onclick = () => {
-  const grade = cfg().grade || (GRADER in S.files ? GRADER : null);
-  if (!grade) {
+  const grades = cfg().grades.length ? cfg().grades : GRADER in S.files ? [{ student: null, tests: GRADER }] : [];
+  if (!grades.length) {
     clearOut();
-    out('Nothing to grade yet: make a file named gradeuser.py (it starts as a grading template), or add a line\n# grade <file>\nto pynodesettings.py.\n', 'dim');
+    out('Nothing to grade yet: make a file named gradeuser.py (it starts as a grading template), or add lines such as\n# grade main.py maintests.py\nto pynodesettings.py.\n', 'dim');
     return drainOut();
   }
-  // the student's file: the open one if it is a student's .py file, else the first such file
-  const main = isPy(S.active) && !isLocked(S.active) && ![SETTINGS, GRADER, 'education.py', grade].includes(S.active) ? S.active : studentFile();
-  run('grade', false, { main: main || grade, grade, verbose: cfg().verbose });
+  const tests = grades.map(g => g.tests);
+  const own = isPy(S.active) && !isLocked(S.active) && ![SETTINGS, GRADER, 'education.py', ...tests].includes(S.active) ? S.active : studentFile();
+  const main = grades.find(g => g.student)?.student || own || tests[0];
+  run('grade', false, { main, grades: grades.map(g => [g.student || null, g.tests]), verbose: cfg().verbose });
 };
 $('#edu').onclick = () => openGuide('educators');
 for (const m of PyLibs.modes()) { // the extra run buttons that libraries add (Doctest, Tests ...)
@@ -1290,10 +1337,17 @@ $('#imp').onclick = () => $('#pick').click();
 // yours). For anyone whose saved project dates from before the sample changed.
 $('#reset').onclick = () => bringIn(STARTER, 'sample');
 $('#pick').onchange = async e => { await importFiles([...e.target.files]); e.target.value = ''; };
+// What leaves the browser (Export, Share): the files as they are, except that the paste log (`# track pastes`) is locked with the
+// password of pynodesettings.py, so a student's own copy of it opens only for the teacher once it is imported again.
+function outgoing() {
+  const files = { ...S.files }, pw = lockOf(SETTINGS);
+  if (PASTES in files && pw && lockOf(PASTES) === null) files[PASTES] = `# pynodemap lock ${pw}\n` + files[PASTES];
+  return files;
+}
 $('#exp').onclick = async () => { // a zip with every file and, for each .py, a PNG of its node map (with the values of the last run)
   setStatus('Exporting…');
   const zip = new JSZip(), left = [];
-  for (const [name, src] of Object.entries(S.files)) {
+  for (const [name, src] of Object.entries(outgoing())) {
     if (isLocked(name) && !teacher()) { left.push(name); continue; } // a locked file is not handed out (unless you are the teacher)
     zip.file(name, src);
     if (!isPy(name) || isLocked(name)) continue;
@@ -1326,7 +1380,7 @@ async function unpack(s) {
 $('#share').onclick = async () => {
   // Locked files are included on purpose: a share link is how an assignment with hidden tests is sent out. The `# pynodemap lock` line
   // travels inside the file, so whoever opens the link finds the file locked again.
-  const url = location.href.split('#')[0] + '#p=' + await pack(S.files);
+  const url = location.href.split('#')[0] + '#p=' + await pack(outgoing());
   try { await navigator.clipboard.writeText(url); setStatus(`Link copied (${url.length.toLocaleString()} characters)`); flash($('#share'), '✓ Link copied'); }
   catch { prompt('Copy this link:', url); }
   if (url.length > 8000) alert('This link is very long and some chat apps may cut it off. Use Export to send a zip instead.');
@@ -1423,6 +1477,7 @@ drag($('#hsplit'), e => document.body.style.setProperty('--con-h', Math.max(60, 
 // ---- go
 $('#libs').textContent = 'Python · ' + PyLibs.names().join(', ');
 cm.swapDoc(docOf(S.active));
+foldLockLines(cm.getDoc());
 cm.setOption('readOnly', isReadOnly(S.active));
 chrome();
 applyPrefs();

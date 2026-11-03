@@ -37,17 +37,38 @@ def _pct(x):  # 66.666 -> "66.7%", 100.0 -> "100%"
 
 
 def _grade(mod):
-    """The Grade button (pynodesettings.py: `# grade tests.py`, or a gradeuser.py): run that file's tests quietly and print the grade.
+    """The Grade button: every `# grade <student file> <test file>` line of pynodesettings.py (or `# grade <test file>`, or just a
+    gradeuser.py), in order: the page passes them as the option "grades", [[student or None, tests], ...]. Each is graded on its own
+    (_grade_one), and with more than one the overall grade, their average, comes last."""
+    grades = _option("grades") or [[None, _option("grade") or ""]]
+    scores = []
+    for student, tests in grades:
+        if len(grades) > 1:
+            print(("\n" if scores else "") + f"== {student + ' with ' if student else ''}{tests}")
+        scores.append(_grade_one(mod, student, tests))
+    if len(grades) > 1:
+        print(f"\nOverall: {_pct(sum(scores) / len(scores))} (the average of {len(scores)} grades)")
+
+
+def _grade_one(mod, student, target):
+    """Grade one student file (the module of that name; None = the file this run started from) with the tests in `target`, print the
+    result and return the grade as a percentage.
     Each TestCase class is a group with an optional `weight = n` (default 1). A group's score is the share of its tests that pass, and
-    the grade is the weighted average of the group scores, as a percentage. A .txt doctest file is one group: each >>> example a test.
+    the grade is the weighted average of the group scores. A .txt doctest file is one group, each >>> example a test, run with the
+    student file's names already defined (as if the examples were in its docstrings; they can import it too).
     Then every test that doesn't pass yet is listed: by its description (the first line of its docstring), or, with the option
     "verbose" (pynodesettings.py: `# grade_verbose: true`), with its code and what went wrong as well."""
-    target, verbose, quiet = _option("grade") or "", _option("verbose", False), io.StringIO()
+    verbose, quiet = _option("verbose", False), io.StringIO()
     rows, failed = [], []  # rows = (group, weight, passed, total); failed = (name, description, details)
+    try:
+        code = importlib.import_module(student[:-3]) if student else mod
+    except BaseException as e:
+        print(f"Grade: 0% ({student} couldn't be run: {type(e).__name__}: {e})")
+        return 0
     if target.endswith(".txt"):
         import doctest
         with contextlib.redirect_stdout(quiet):
-            r = doctest.testfile(target, module_relative=False, report=False)
+            r = doctest.testfile(target, module_relative=False, report=False, globs=dict(vars(code)))
         rows.append((target, 1, r.attempted - r.failed, r.attempted))
         # doctest's report: one block per failed example, each starting with a line of stars, then File "t.txt", line N
         for block in quiet.getvalue().split("*" * 70):
@@ -59,7 +80,7 @@ def _grade(mod):
             tests = importlib.import_module(target[:-3])
         except BaseException as e:
             print(f"Grade: the tests in {target} couldn't be loaded ({type(e).__name__}: {e})")
-            return
+            return 0
         groups = {}  # class name -> (weight, its tests), in the order they come
         for t in _flat(unittest.defaultTestLoader.loadTestsFromModule(tests)):
             w = getattr(type(t), "weight", 1)
@@ -94,6 +115,7 @@ def _grade(mod):
             print(f"  {name}" + (f": {desc}" if desc else ""))
             if details:
                 print(textwrap.indent(details, "      "))
+    return grade
 
 
 run_modes = {"unittest": _run, "grade": _grade}  # mode id -> fn(module); "grade" has no button of its own (the page adds one, see SETTINGS.md)

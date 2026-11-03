@@ -119,6 +119,7 @@ Other things worth knowing:
 | Insert | Overwrite mode on / off |
 | ↑ / ↓ at the `>>>` prompt | Earlier / later lines typed there |
 | Ctrl+/ | Comment or uncomment the selected lines |
+| Ctrl+Q, or ▾ in the gutter | Fold or unfold the indented block under a line (`class Dog:`, a `def`, a loop) |
 | Tab · Shift+Tab | Indent · outdent |
 | Ctrl+mouse wheel over the map | Zoom the map |
 | Enter in "Find variable…" | Jump to the next matching node |

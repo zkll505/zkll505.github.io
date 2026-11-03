@@ -855,6 +855,20 @@ def grade_mode():
     r, out = go("missing.py")
     assert out.startswith("Grade: the tests in missing.py couldn't be loaded"), out
 
+    # several `# grade <student file> <tests>` lines: each graded on its own, then the overall average. A .txt doctest file sees the
+    # student file's names without importing them.
+    files = {"sol.py": sol, "shapes.py": "def area(w, h):\n    return w * h\n", "t.py": tests.replace("# pynodemap lock pw\n", ""),
+             "shapes_tests.txt": "# pynodemap lock pw\nThe area of a rectangle:\n>>> area(2, 3)\n6\n>>> area(0, 5)\n0\n"}
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        r = json.loads(runner.run(json.dumps(files), "sol.py", "grade", "[]", 0, "", '["t.py", "shapes_tests.txt"]',
+                                  json.dumps({"grades": [["sol.py", "t.py"], ["shapes.py", "shapes_tests.txt"]]})))
+    out = o.getvalue()
+    assert r["error"] is None and out.startswith("== sol.py with t.py\nGrade: 50%\n"), out
+    assert "\n== shapes.py with shapes_tests.txt\nGrade: 100%\n" in out and out.endswith("\nOverall: 75% (the average of 2 grades)\n"), out
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        runner.run(json.dumps(files), "sol.py", "grade", "[]", 0, "", "[]", json.dumps({"grades": [["nope.py", "t.py"]]}))
+    assert o.getvalue().startswith("Grade: 0% (nope.py couldn't be run"), o.getvalue()
+
 
 if __name__ == "__main__":
     runner.LIMIT = 20_000  # a smaller cutoff keeps the infinite-loop checks fast
