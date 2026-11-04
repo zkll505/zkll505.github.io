@@ -779,6 +779,39 @@ def stdin_and_builtins():
     assert r["need_input"] is False and out.startswith("again? fine"), out
 
 
+def changing_is_not_binding():
+    """Changing an object doesn't make its name local to a function (only binding does): no 'used before' hint, and the wire comes from
+    where the name was bound. Calling something in an imported module doesn't change the module, even if it is called add()."""
+    def hints_of(src, mods=()):
+        return [(h["line"], h["msg"]) for h in json.loads(runner.analyze(src, json.dumps(list(mods))))["hints"] if "before" in h["msg"]]
+
+    for src in ("items = []\ndef f():\n    items.append(1)\n    return items\nf()\n",
+                "counts = {}\ndef f():\n    counts['a'] = 1\nf()\n",
+                "class C:\n    pass\nc = C()\ndef f():\n    c.x = 1\nf()\n",
+                "import main\ndef f():\n    main.add(2, 3)\n    main.add(1, 1)\nf()\n",
+                "def f(s):\n    s.add(1)\nf(set())\n",
+                "s = set()\ns.add(1)\n"):
+        assert hints_of(src, ["main"]) == [], src
+    # a name the function really does bind is still flagged when it is changed or used first
+    assert [h[0] for h in hints_of("def f():\n    s.add(1)\n    s = set()\nf()\n")] == [2]
+    assert [h[0] for h in hints_of("total = 0\ndef f():\n    print(total)\n    total = 1\nf()\n")] == [3]
+    assert [h[0] for h in hints_of("s.add(1)\ns = set()\n")] == [1]
+
+    def data(src, mods=()):
+        g = json.loads(runner.analyze(src, json.dumps(list(mods))))
+        return {(g["nodes"][w["from"]]["line"], g["nodes"][w["to"]]["line"], w["label"]) for w in g["wires"] if w["kind"] == "data"}, g
+
+    wires, _ = data("items = []\ndef f():\n    items.append(1)\n    items.append(2)\n    return items\nf()\n")
+    assert {(1, 3, "items"), (3, 4, "items"), (4, 5, "items")} <= wires, wires
+    wires, _ = data("items = []\ndef f():\n    for i in range(2):\n        items.append(i)\nf()\n")
+    assert (1, 4, "items") in wires and any(w[:2] == (4, 4) and w[2] == "items" for w in wires), wires  # from the global, and round the loop
+    wires, g = data("import main\ndef f():\n    main.add(2, 3)\n    main.add(1, 1)\nf()\n", ["main"])
+    assert (1, 3, "main") in wires and (1, 4, "main") in wires and (3, 4, "main") not in wires, wires
+    assert all("main" not in n["show"] for n in g["nodes"] if n["line"] > 2), "a module isn't changed by calling something in it"
+    wires, g = data("from main import lst\ndef f():\n    lst.append(1)\nf()\n", ["main"])
+    assert (1, 3, "lst") in wires and [n["show"] for n in g["nodes"] if n["line"] == 3] == [["lst"]], (wires, g["nodes"])  # (from ... import: an object, not a module)
+
+
 def input_in_bare_except():
     """With no mailbox, input() falls back to "re-run with the answers so far". A bare `except:` around it must not swallow that."""
     loop = 'while True:\n  try:\n    int(input("number: "))\n  except:\n    break\nprint("done")\n'
@@ -891,6 +924,7 @@ if __name__ == "__main__":
     coverage_report()
     big_output()
     stdin_and_builtins()
+    changing_is_not_binding()
     input_in_bare_except()
     console_shell()
     grade_mode()

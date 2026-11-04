@@ -92,9 +92,13 @@ def own(s):
     return [c for c in ast.iter_child_nodes(s) if isinstance(c, ast.expr)], [], None
 
 
-def scan(exprs, me, methods):
-    """-> (names used, names defined, [(callee, label)]). 'me' is the method's self name: self.x becomes one name 'self.x'."""
+def scan(exprs, me, methods, modules=()):
+    """-> (names used, names defined, [(callee, label)], names only changed). 'me' is the method's self name: self.x becomes one name
+    'self.x'. "Only changed" is the part of the defined names this statement changes without binding (lst.append(x), a[i] = v, obj.x = v):
+    that doesn't make a name local to a function, as an assignment does. `modules` = names bound by `import`: calling something in a
+    module doesn't change it, even if it is called add or update (main.add(2, 3))."""
     uses, defs, calls, bound, skip = {}, {}, [], set(), set()
+    changed, stored = set(), set()
     for m in [m for e in exprs for m in ast.walk(e)]:
         if isinstance(m, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
             bound |= {t.id for g in m.generators for t in ast.walk(g.target) if isinstance(t, ast.Name)}
@@ -112,7 +116,9 @@ def scan(exprs, me, methods):
                 if f.attr in MUTATORS:  # lst.append(x) changes lst; self.lst.append(x) changes self.lst
                     v = f.value
                     if isinstance(v, ast.Name):
-                        defs[v.id] = 1
+                        if v.id not in modules:
+                            defs[v.id] = 1
+                            changed.add(v.id)
                     elif isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id == me:
                         defs[f"{me}.{v.attr}"] = 1
         if isinstance(m, ast.Attribute) and id(m) not in skip and isinstance(m.value, ast.Name):
@@ -121,13 +127,17 @@ def scan(exprs, me, methods):
                 (defs if isinstance(m.ctx, ast.Store) else uses)[f"{me}.{m.attr}"] = 1
             elif isinstance(m.ctx, ast.Store):
                 defs[m.value.id] = 1  # obj.attr = v changes obj
+                changed.add(m.value.id)
         elif isinstance(m, ast.Subscript) and isinstance(m.ctx, ast.Store) and isinstance(m.value, ast.Name):
             defs[m.value.id] = 1  # a[i] = v changes a
+            changed.add(m.value.id)
         elif isinstance(m, ast.Name) and id(m) not in skip:
             (defs if isinstance(m.ctx, ast.Store) else uses)[m.id] = 1
+            if isinstance(m.ctx, ast.Store):
+                stored.add(m.id)
     for b in bound:
         uses.pop(b, None), defs.pop(b, None)
-    return list(uses), list(defs), calls
+    return list(uses), list(defs), calls, changed - stored
 
 
 def analyze(src, mods_json="[]"):
@@ -146,15 +156,20 @@ def analyze(src, mods_json="[]"):
     # the def/class node). glob[scope] = names declared `global`/`nonlocal` there. rets = ids of defs that `return` a value,
     # gens = ids of generator defs, by_method[name] = ids of methods with that name, init[class id] = id of its __init__.
     nodes, tabs, glob, rets, gens, by_method, init, hints = [], {}, {}, set(), set(), {}, {}, []  # tabs[scope][name] = ids of defining nodes
+    binds = {}
+    imported = {(a.asname or a.name).split(".")[0] for s in ast.walk(tree) if isinstance(s, ast.Import) for a in s.names}
 
     def hint(line, msg, kind="warn"):
         hints.append({"line": line, "msg": msg, "kind": kind})
 
-    def reg(scope, name, nid, cls):
+    def reg(scope, name, nid, cls, binding=True):
         """Record that node nid defines `name`. `self.x` names go to the class's table (all its methods share them); a name
-        declared global/nonlocal goes to the module table."""
+        declared global/nonlocal goes to the module table. binding=False: it only changes the object (see scan), so `binds` doesn't
+        list it: binds[scope] = the names really bound in that scope, the ones that are local to it as far as Python is concerned."""
         scope = cls if "." in name and cls is not None else -1 if name in glob.get(scope, ()) else scope
         tabs.setdefault(scope, {}).setdefault(name, []).append(nid)
+        if binding:
+            binds.setdefault(scope, set()).add(name)
 
     def add(kind, line, end, text, parent, scope, cls=None, name=None):
         """Create a node. scope = id of the enclosing def/class node (-1 at module level), cls = the class whose `self` is in use."""
@@ -200,7 +215,7 @@ def analyze(src, mods_json="[]"):
             glob.setdefault(scope, set()).update(s.names)
             return
         ex, edefs, show = own(s)
-        uses, defs, calls = scan(ex, me, methods)
+        uses, defs, calls, changed = scan(ex, me, methods, imported)
         if t is ast.AugAssign and isinstance(s.target, ast.Name):
             uses.append(s.target.id)
         defs = list(dict.fromkeys(defs + edefs))
@@ -213,7 +228,7 @@ def analyze(src, mods_json="[]"):
         if t is ast.Assign and isinstance(s.value, ast.Call) and isinstance(s.value.func, ast.Name):
             n["rcall"] = s.value.func.id
         for d in defs:
-            reg(scope, d, n["id"], cls)
+            reg(scope, d, n["id"], cls, d not in changed)
         if t is ast.Return and s.value is not None and scope != -1 and nodes[scope]["kind"] == "def":
             rets.add(scope)
         inner, me2, cls2 = scope, me, cls
@@ -283,14 +298,21 @@ def analyze(src, mods_json="[]"):
                 if s == -1:
                     break
                 s = nodes[s]["scope"]
+        found = []
         for sc in chain:
             ids = tabs.get(sc, {}).get(name)
             if ids:
-                out = [i for i in ids if i < n["id"]][-1:] or ids[:1]
+                earlier = [i for i in ids if i < n["id"]][-1:]
+                # a name this scope only changes (items.append(1) on a global) isn't local to it: until it has been changed here, its
+                # value comes from further out, so keep looking
+                local = bool(earlier) or "." in name or name in binds.get(sc, ())
+                out = earlier or (ids[:1] if local else [])
                 for lp in loops_of(n):  # a value made later in ANY enclosing loop reaches n on that loop's next repeat
                     out += [i for i in ids if n["id"] <= i <= lp["last"]][-1:]  # (<=: a statement can feed itself on the next repeat)
-                return list(dict.fromkeys(out))
-        return []
+                found += out
+                if local:
+                    break
+        return list(dict.fromkeys(found))
 
     wires = {}
 
@@ -336,8 +358,8 @@ def analyze(src, mods_json="[]"):
         if sc == -1 or nodes[sc]["kind"] == "def":
             for name in n["uses"]:
                 ids = tabs.get(sc, {}).get(name)
-                if "." in name or not ids or name in glob.get(sc, ()):
-                    continue
+                if "." in name or not ids or name in glob.get(sc, ()) or name not in binds.get(sc, ()):
+                    continue  # (not bound in this scope: it is someone else's name, which this scope may only change)
                 lp = loop_of(n)
                 if not [i for i in ids if i < n["id"]] and not (lp and any(n["id"] < i <= lp["last"] for i in ids)):
                     hint(n["line"], f"'{name}' is used here before it has been given a value.")
