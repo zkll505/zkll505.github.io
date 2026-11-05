@@ -82,7 +82,8 @@ Not passing yet:
 ```
 
 With `# grade_verbose: true` each one also shows the test's code and the failure (`AssertionError: 8 != 2`); for that run the test file is
-not kept locked, since its code is what is shown. Leave it off for `# self grade` if the tests should stay secret. In a `.txt` doctest
+not kept locked, since its code is what is shown. Leave it off for `# self grade` if the tests should stay secret. A traceback appears only
+when the student's code crashes, and lists only the student's files, so to find a bug in a test itself use the **Tests** button. In a `.txt` doctest
 file a failing example is shown by its line number, or with verbose, as doctest reports it (the example, what was expected, what came).
 
 Make a file named **`gradeuser.py`** (the **+** in the explorer) and it starts as a template of two weighted groups, with a described

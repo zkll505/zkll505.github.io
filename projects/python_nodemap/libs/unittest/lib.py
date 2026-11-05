@@ -7,6 +7,7 @@ import io
 import re
 import sys
 import textwrap
+import traceback
 import unittest
 
 _init = unittest.TextTestRunner.__init__
@@ -25,6 +26,21 @@ def _run(mod):  # run every TestCase in the imported file, and in the project's 
     for name in _locked():  # provided by runner.py: module names of the locked files
         suite.addTests(loader.loadTestsFromModule(importlib.import_module(name)))
     unittest.TextTestRunner(verbosity=2).run(suite)
+
+
+def _student_errors(tests, target):
+    """A test result class for Grade: what went wrong, with a traceback of only the student's own lines, meaning those in the project
+    but not in the test file `target` (module `tests`), which the student can't change and may be hidden. A failed assert is then just
+    "AssertionError: ...", and a crash in the student's code still shows where in their code it happened."""
+
+    class Result(unittest.TextTestResult):
+        def _exc_info_to_string(self, err, test):  # every failure, error and subTest failure is turned into text here
+            root = tests.__file__[:-len(target)]
+            mine = [f for f in traceback.extract_tb(err[2]) if f.filename.startswith(root) and f.filename != tests.__file__]
+            head = "Traceback (most recent call last):\n" + "".join(traceback.format_list(mine)) if mine else ""
+            return head + "".join(traceback.format_exception_only(err[0], err[1]))
+
+    return Result
 
 
 def _flat(suite):  # the single tests in a (nested) TestSuite
@@ -88,7 +104,7 @@ def _grade_one(mod, student, target):
         order = list(vars(tests))  # the loader sorts classes by name: list the groups in the order the file defines them
         groups = dict(sorted(groups.items(), key=lambda g: order.index(g[0]) if g[0] in order else len(order)))
         for name, (w, ts) in groups.items():
-            res = unittest.TextTestRunner(stream=quiet, verbosity=0).run(unittest.TestSuite(ts))
+            res = unittest.TextTestRunner(stream=quiet, verbosity=0, resultclass=_student_errors(tests, target)).run(unittest.TestSuite(ts))
             bad = res.failures + res.errors
             total = res.testsRun - len(res.skipped)
             rows.append((name, w, total - len(bad), total))

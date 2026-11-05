@@ -1000,6 +1000,26 @@ def grade_mode():
     r, out = go("t.py", [], verbose=True)  # grade_verbose: the test's code and what went wrong
     assert "  T.test_sub: Subtracting gives the difference.\n      def test_sub(self):\n" in out, out
     assert "self.assertEqual(sub(5, 3), 2)  # SECRET2" in out and "AssertionError: 8 != 2" in out and "SECRET\n" not in out.replace("SECRET2", ""), out
+    assert "Traceback" not in out and 'File "t.py"' not in out, out  # a failed assert: no traceback through the test file
+
+    def crash(tests, locked=()):  # a verbose grade where main.py divides by zero, with these tests
+        main = "import helper\n\nif __name__ == '__main__':\n    helper.go(int(input()))\n"
+        with contextlib.redirect_stdout(io.StringIO()) as o:
+            runner.run(json.dumps({"main.py": main, "helper.py": "def go(n):\n    print(1 / n)\n", "t.py": tests}), "main.py", "grade", "[]", 0, "",
+                       json.dumps(list(locked)), json.dumps({"grades": [["main.py", "t.py"]], "verbose": True}))
+        return o.getvalue()
+
+    # the tests of a ported lab: each runs main.py as __main__ through exec(), with a fake input()
+    lab = ("import os\nimport unittest\n\ndef run():\n    path = os.path.abspath('main.py')\n    with open(path) as f:\n        src = f.read()\n"
+           "    exec(compile(src, path, 'exec'), {'__name__': '__main__', 'input': lambda: '0'})\n\n"
+           "class T(unittest.TestCase):\n    def test_x(self):\n        run()\n\n    def test_sub(self):\n        with self.subTest(n=0):\n            run()\n")
+    for locked in ([], ["t.py"]):  # (a locked test file is served from memory, and its frames have to go just the same)
+        out = crash(lab, locked)
+        assert 'File "main.py", line 4, in <module>' in out and 'File "helper.py", line 2, in go' in out and "ZeroDivisionError" in out, out
+        assert 't.py"' not in out and "unittest" not in out, out
+    assert out.count("Traceback") == 2, out  # (subTest failures too)
+    out = crash("import unittest\n\nclass T(unittest.TestCase):\n    def test_y(self):\n        import helper\n        helper.go('a')\n")
+    assert "TypeError" in out and 'File "helper.py", line 2, in go' in out and 't.py"' not in out, out
     r, out = go("t.txt", ["t.txt"])  # (a hidden .txt is still written to disk, for doctest to read)
     assert out.splitlines()[0] == "Grade: 66.7%" and out.splitlines()[1].split() == ["t.txt", "weight", "1", "2/3", "passed", "66.7%"], out
     assert out.endswith("Not passing yet:\n  t.txt, line 4\n") and "Expected" not in out, out
