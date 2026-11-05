@@ -23,7 +23,9 @@ Data shapes (plain JSON, handed to nodemap.js / app.js unchanged):
         kind "data": a value flows from node `from` to node `to` (label = the variable name; back = it comes from a later line
         of the same loop). kind "call": `to` is the function/class/method called (label = the call text; two = it returns a value).
   hint  {line, msg, kind}   kind is "warn" or "error"; the editor draws these as squiggles.
-  run   {files, error, need_input, gui, timeline, cover}
+  run   {files, error, need_input, gui, timeline, cover, disk}
+        disk = what the program did to the project folder: {written: {path: text}, deleted: [paths], skipped: [paths]}, or None. The page
+        puts that in the project, so a file the program writes shows up in the explorer. (`shell` returns it too.)
         files[name] = {vals, hits, calls, rets, params}, each keyed by line number (the aggregate shown when the run is finished).
         cover = {files: {name: [lines that never ran]}, report: the text `coverage report -m` would print} (see statements())
         timeline = {files, steps, facts, trunc}: steps = [file index, line, file index, line, ...] for every executed line;
@@ -509,6 +511,43 @@ def gui_cleanup():
     _LIVE.clear()
 
 
+SKIP_DIRS = {"__pycache__"}  # never part of a project
+MAXBACK = 500_000  # the biggest text file that comes back to the project (the same limit as a share link)
+
+
+def disk_snapshot(root):
+    """The project folder as it is now: {relative path (with /): text, or None if it can't be kept as text}. A folder with nothing in it
+    is listed as "folder/", which is also how the page's project keeps an empty folder."""
+    found = {}
+    for here, dirs, names in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+        rel = os.path.relpath(here, root).replace(os.sep, "/")
+        rel = "" if rel == "." else rel + "/"
+        if rel and not dirs and not names:
+            found[rel] = ""
+        for name in names:
+            try:
+                with open(os.path.join(here, name), "rb") as f:
+                    data = f.read()
+                text = data.decode("utf-8")
+                found[rel + name] = text if len(text) <= MAXBACK else None
+            except (OSError, UnicodeDecodeError):
+                found[rel + name] = None
+    return found
+
+
+def disk_changes(root, before):
+    """What changed in the project folder since the snapshot `before` (which is brought up to date): {written: {path: text}, deleted:
+    [paths], skipped: [paths that can't be kept: binary, or too big]}, or None if nothing did."""
+    now = disk_snapshot(root)
+    written = {n: t for n, t in now.items() if t is not None and before.get(n, 0) != t}
+    skipped = sorted(n for n, t in now.items() if t is None and n not in before)
+    deleted = sorted(n for n in before if n not in now)
+    before.clear()
+    before.update(now)
+    return {"written": written, "deleted": deleted, "skipped": skipped} if written or deleted or skipped else None
+
+
 def shell_cleanup():
     """Forget what the last run left behind: its temp project folder and its modules (a new run or a new project starts clean)."""
     if _SHELL:
@@ -550,7 +589,7 @@ def shell(src, files_json="{}", locked_json="[]", mailbox_url=""):
             sh["fail"](e)
     finally:
         sh["leave"]()
-    return json.dumps({"more": False, "files": sh["T"]})
+    return json.dumps({"more": False, "files": sh["T"], "disk": disk_changes(sh["root"], sh["disk"])})
 
 
 PRAGMA = re.compile(r"#\s*pragma:?\s*no\s*cover", re.I)
@@ -630,7 +669,13 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
     gui_cleanup()
     shell_cleanup()
     root = tempfile.mkdtemp()
-    mods = {n[:-3] for n in files if n.endswith(".py")}
+    # the project's modules: main.py is `main`, pkg/util.py is `pkg.util` (and `pkg` is importable). Python puts the folder of the file it
+    # runs on the path, so what sits next to it can be imported by its plain name too
+    dotted = {n[:-3].replace("/", ".") for n in files if n.endswith(".py")}
+    here = main.rpartition("/")[0]
+    besides = {n[len(here) + 1:-3] for n in files if here and n.endswith(".py") and n.startswith(here + "/") and "/" not in n[len(here) + 1:]}
+    mods = {m.split(".")[0] for m in dotted} | besides
+    loaded = dotted | mods  # what to remove from sys.modules between runs
     names = list(files)
     fid = {n: i for i, n in enumerate(names)}
     info, T, step = {}, {}, [0]
@@ -641,11 +686,14 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
     # around input() can't swallow it and loop
     steps, facts, over, cur, asked = [], [], [False], [None, 0], [False]  # timeline: steps = [file, line, ...]
     for name, src in files.items():
-        if name in locked and name.endswith(".py"):  # kept in memory only (see Hidden) and out of the trace (a text file has to be on disk)
-            hidden[name[:-3]] = src
+        path = os.path.join(root, *name.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)  # (a name ending in / is a folder with nothing in it yet)
+        if name.endswith("/"):
             continue
-        path = os.path.join(root, name)
-        with open(path, "w", encoding="utf-8") as f:
+        if name in locked and name.endswith(".py"):  # kept in memory only (see Hidden) and out of the trace (a text file has to be on disk)
+            hidden[name[:-3].replace("/", ".")] = src
+            continue
+        with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(src)
         if not name.endswith(".py"):
             continue  # a text file (test_klondike.txt): it only has to be on disk, for open() and doctest.testfile()
@@ -658,6 +706,7 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
         T[name] = {"vals": {}, "hits": {}, "calls": {}, "rets": {}, "params": {}}
 
     _HIDDEN[:] = sorted(hidden)
+    disk = disk_snapshot(root)  # what the program finds; what differs when it ends goes back to the project
 
     def fact(name, kind, line, data):  # something that became known right before step number len(steps)/2
         if len(steps) < 2 * MAXSTEPS and len(facts) < MAXFACTS:
@@ -707,14 +756,17 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
 
         return local
 
-    user = mods | {"__main__"}
+    user = loaded | {"__main__"}
     real_import, real_input = builtins.__import__, builtins.input
 
     def guard(name, globals=None, locals=None, fromlist=(), level=0):  # replaces __import__ while the program runs
-        if level == 0 and (globals is None or globals.get("__name__") in user):
+        # who is importing? With no globals (a plain __import__('x') call) it is whoever called: the student's code is checked, but Python's
+        # own code isn't (encoding="utf8" makes the encodings package import its codec this way)
+        caller = sys._getframe(1).f_globals if globals is None else globals
+        if level == 0 and caller.get("__name__") in user:
             top = name.split(".")[0]
             if top not in ALLOWED and top not in mods and top != "__main__":  # unittest.main() imports __main__
-                raise ImportError(f"'{top}' isn't available here. You can import: " + ", ".join(ALLOWED + tuple(sorted(mods - {main[:-3]}))))
+                raise ImportError(f"'{top}' isn't available here. You can import: " + ", ".join(ALLOWED + tuple(sorted(dotted - {main[:-3].replace("/", ".")}))))
         return real_import(name, globals, locals, fromlist, level)
 
     def ui_input(msg=""):  # replaces input(): waits for the answer typed in the console (ask), or re-runs with the answers so far
@@ -740,7 +792,7 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
             self.f = f
 
         def write(self, s):
-            return self.f.write(s.replace(root + os.sep, "").replace(root + "/", ""))
+            return self.f.write(s.replace(root + os.sep, "").replace(root + "/", "").replace(root, "."))
 
         def __getattr__(self, k):
             return getattr(self.f, k)
@@ -761,15 +813,15 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
         return {"file": loc[0], "line": loc[1], "msg": msg} if loc else None
 
     program = main.endswith(".py")  # a text file isn't executed: a mode (doctest) reads it through mod.__file__
-    mod = types.ModuleType("__main__" if mode == "run" or not program else main[:-3])
-    mod.__file__ = os.path.join(root, main)
+    mod = types.ModuleType("__main__" if mode == "run" or not program else main[:-3].replace("/", "."))
+    mod.__file__ = os.path.join(root, *main.split("/"))
     saved = {}
 
     class Hidden:  # serves the locked files as modules from memory: `import tests_hidden` works, but there is no file for open() to read,
         # and no source for tracebacks, inspect or doctest to quote (get_source says there is none)
         def find_spec(self, name, path=None, target=None):
             if name in hidden:
-                return importlib.util.spec_from_loader(name, self, origin=os.path.join(root, name + ".py"))
+                return importlib.util.spec_from_loader(name, self, origin=os.path.join(root, *name.split(".")) + ".py")
 
         def create_module(self, spec):
             return None
@@ -789,6 +841,8 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
         builtins.__import__, builtins.input = guard, ui_input
         sys.stdout, sys.stderr = Scrub(sys.stdout), Scrub(sys.stderr)
         sys.path.insert(0, root)
+        if here:
+            sys.path.insert(0, os.path.join(root, *here.split("/")))
         if hidden:
             sys.meta_path.insert(0, finder)
         os.chdir(root)
@@ -811,8 +865,9 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
         if saved["main"]:
             sys.modules["__main__"] = saved["main"]
 
-    for m in mods:
+    for m in loaded:
         sys.modules.pop(m, None)
+    sys.dont_write_bytecode = True  # (no __pycache__ among the student's files)
     err, need, gui = None, False, False
     enter()
     try:
@@ -839,13 +894,14 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
             step[0] = 0
             asked[0] = False
 
-        _SHELL.update(enter=enter, leave=leave, reset=reset, T=T, step=step, root=root, mods=mods, mod=mod, fail=fail)
+        _SHELL.update(enter=enter, leave=leave, reset=reset, T=T, step=step, root=root, mods=loaded, mod=mod, fail=fail, disk=disk)
         if gui:
-            _LIVE.update(enter=enter, leave=leave, reset=reset, T=T, step=step, root=root, mods=mods)
+            _LIVE.update(enter=enter, leave=leave, reset=reset, T=T, step=step, root=root, mods=loaded)
         else:
             for g in GUI.values():
                 g["finish"]()  # the script ended without mainloop(): its windows close, like real Tk
     return json.dumps({"files": T, "error": err, "need_input": need, "gui": gui, "cover": cover_of(T, files),
+                       "disk": None if need else disk_changes(root, disk),
                        "timeline": {"files": names, "steps": steps, "facts": facts, "trunc": over[0]}})
 
 

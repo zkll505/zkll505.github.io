@@ -44,9 +44,9 @@ your browser's `localStorage`.
   `pynodesettings.py` is open) covers assignments, locks, settings and grading. A new visitor's sample project also has a locked
   `education.py` with notes for teachers (password `teach`), plus a hidden `pynodesettings.py` and `gradeuser.py` with the same
   password, which show up once `education.py` is unlocked (a password opens every file locked with it).
-- **Find and replace** with a match count, and the node map can be **popped out** into its own window (picture-in-picture where the
-  browser has it, so it floats above the editor or another app).
-- **Libraries** (each one is a plug-in, see below): `random`, `math`, `time`, `enum`, `pathlib`, `typing`, `sys`, `io`, `builtins`,
+- **Find and replace** with a match count, and the node map and the console can be **popped out** into windows of their own
+  (picture-in-picture where the browser has it, so it floats above the editor or another app).
+- **Libraries** (each one is a plug-in, see below): `random`, `math`, `time`, `enum`, `pathlib`, `os`, `typing`, `sys`, `io`, `builtins`,
   `contextlib`, `collections`, `copy`, `re`, `itertools`, `functools`, `string`, `doctest`, `unittest`, `tkinter` (GUI windows) and `turtle`.
 
 ## Run it
@@ -81,13 +81,19 @@ so right after deploying a hard refresh (Ctrl+F5) shows the new version.
 
 Other things worth knowing:
 
-- **Files**: **+** in the explorer makes a file: `name.py` (names must be importable: letters, digits, `_`) or a plain-text
+- **Files**: **+** in the explorer makes a file: `name.py` (names must be importable: letters, digits, `_`) or a text file such as
   `name.txt`. Files import each other with a plain `import helpers`. Hover a file to rename (✎) or delete (✕) it.
-- **Text files** (`.txt`) are kept with the project and written next to the `.py` files on every run, so `open("data.txt")` and
+- **Folders**: 📁 makes one, or put it in a file's name (`data/notes.txt`); ✎ with a path moves a file or folder. `open("data/notes.txt")` and
+  `os` work as usual, `pkg/util.py` is the module `pkg.util`, and what sits next to the file you run can be imported by its plain name.
+  Paths are relative to the project's top folder. Import keeps a zip's folders (dropping a single folder that wraps everything),
+  and Export and Share keep them too.
+- **Files a program writes come back**: when a run ends (or a line at the `>>>` prompt), new and changed files show up in the explorer
+  and deleted ones go; the console says which. Binary files and files over 500,000 characters last only until the next run.
+- **Text files** (`.txt`, `.csv`, `.json` ...) are kept with the project and written next to the `.py` files on every run, so `open("data.txt")` and
   `doctest.testfile("test_klondike.txt")` find them. They get no node map or hints; **Run** (or **Doctest**) on one runs the `>>>`
   examples in it.
 - **Share** copies a link that contains the whole project (it lives in the part after `#`, so no server ever sees it). **Import**
-  takes `.py` and `.txt` files or a `.zip` of them (anything else in it is skipped). Both open a dialog listing what comes in and what
+  takes `.py` and text files (`.txt .csv .tsv .md .json .log .dat .ini .xml`) or a `.zip` of them (anything else in it is skipped). Both open a dialog listing what comes in and what
   happens to each file, with the choice of **Replace my project** or **Add to my project** (files with the same name are replaced;
   locked, hidden and read-only ones are kept). **Export** downloads a zip of every file plus a PNG of each `.py` file's node map.
 - **Doctest** and **Tests** buttons (next to Run) import the active file and run its `>>>` examples or its `unittest` tests (on a
@@ -101,7 +107,7 @@ Other things worth knowing:
 - **The console**: when a program calls `input()`, type the answer right after its prompt and press Enter. Once a run ends, the
   console shows `>>>`: type Python there and it runs in the program's globals (an expression's value is printed, a block such as a
   `for` loop ends with an empty line, ↑ / ↓ bring back earlier lines). **Stop** ends a line that runs forever.
-- **⧉** at the top of the node map pops it out into its own window; ⤓ there, or closing that window, puts it back.
+- **⧉** at the top of the node map or the console pops it out into its own window; ⤓ there, or closing that window, puts it back.
 - **Insert** switches to overwrite mode: the cursor becomes a block and the status bar says OVR.
 - **Reset to sample** (bottom left, next to the status) brings back the sample project a new visitor starts with, after asking:
   your saved project otherwise stays as it was, so this is how you see a newer sample.
@@ -140,10 +146,10 @@ Only these can be imported (plus the project's own files); anything else raises 
 
 | Library                          | What you get                                                                                                                                                                                                                                |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `random`, `math`, `time`, `enum`, `pathlib`, `typing`, `sys`, `io`, `builtins`, `contextlib`, `collections`, `copy`, `re`, `itertools`, `functools`, `string` | The standard modules (autocomplete included). `pathlib` and `open()` work on a temporary folder that is deleted when the run ends.                                                                                                                                                                                               |
+| `random`, `math`, `time`, `enum`, `pathlib`, `os`, `typing`, `sys`, `io`, `builtins`, `contextlib`, `collections`, `copy`, `re`, `itertools`, `functools`, `string` | The standard modules (autocomplete included). `pathlib` and `open()` work on a temporary folder that is deleted when the run ends.                                                                                                                                                                                               |
 | `doctest`                        | The module, plus a **Doctest** button that runs the active file's `>>>` examples (a `.txt` file's, if that is the active file).                                                                                                                                                           |
 | `unittest`                       | The module, plus a **Tests** button; the report is shown in the console in normal colour.                                                                                                                                                   |
-| `tkinter`                        | A look-alike of real tkinter drawn as floating windows: the common widgets, `pack`/`grid`/`place`, variables, `bind`, `after`, `Canvas`, menus, `messagebox`, `ttk` basics. See its limits in [`libs/tkinter/lib.py`](libs/tkinter/lib.py). |
+| `tkinter`                        | A look-alike of real tkinter drawn in real windows that resize: the common widgets, `pack`/`grid`/`place`, variables, `bind`, `after`, `Canvas`, menus, `messagebox`, `ttk` basics. See its limits in [`libs/tkinter/lib.py`](libs/tkinter/lib.py). |
 | `turtle`                         | The everyday turtle API on top of that canvas: movement, pen, colours, fill, shapes, stamps, `write`, key/click/timer events and the module-level functions.                                                                                |
 
 Each library, what it supports and what it doesn't: [libs/README.md](libs/README.md).
@@ -160,6 +166,10 @@ Each library, what it supports and what it doesn't: [libs/README.md](libs/README
   not available inside GUI callbacks either way (use an `Entry` widget).
 - A GUI window stays open after the script ends, like in IDLE or Thonny; it closes with its ✕ or the next **Run**. Code after
   `mainloop()` / `turtle.done()` never runs.
+- **GUI windows are real browser windows.** The first is picture-in-picture where the browser has it and it is free (a page can have only
+  one: the node map or the console may hold it); the rest are popups. A browser opens a window only just after a click, so a program that
+  takes more than a few seconds to open one, or opens several at once, gets an **Open window** prompt at the top right of the page.
+  `resizable(False, False)` can't be enforced, and in picture-in-picture `geometry()` from code only applies just after a click (otherwise the content scrolls).
 - Dialogs (`messagebox.askyesno`, `simpledialog.askstring`) can't wait for a click, so they answer immediately and say so.
 - **Keys and clicks reach a running program** through a service worker (`sw.js`), so a loop that keeps calling `update()`, like an
   animation or a game, can be steered from the keyboard. Where the browser has no service worker (Firefox private windows, plain
@@ -182,6 +192,7 @@ Each library, what it supports and what it doesn't: [libs/README.md](libs/README
 | `ImportError: 'x' isn't available here` | Only the libraries listed above can be imported. The message lists what you can use. |
 | Python restarts after **Stop** | That is how a running program is interrupted. It takes a couple of seconds. |
 | A window won't go away | Close it with its ✕ or press **Run** (a new run closes the old windows). |
+| A window didn't open | Press **Open window** at the top right of the page. If that does nothing too, allow popups for this site in the browser. |
 | Keys or clicks do nothing in a running animation | They travel through the service worker (`sw.js`), which needs https or `localhost` and isn't available in Firefox private windows. The loop must also call `update()` (`turtle.update()`, `screen.update()`, `root.update()`) so the program can see them. Ctrl+F5 skips the service worker for that visit; reload normally. |
 
 ## Feedback

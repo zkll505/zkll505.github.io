@@ -9,8 +9,7 @@
                     Run -> W.call('run') -> S.trace + S.tl (the timeline) -> draw() again, now with values
                     stepping -> NodeMap.viewAt(S.tl, step) -> draw() */
 'use strict';
-let pipWin = null; // the window the node map was popped out into (see popMap), or null
-const $ = s => document.querySelector(s) || pipWin?.document.querySelector(s);
+const $ = s => document.querySelector(s) || PopOut.find(s); // (a panel may be popped out into a window of its own)
 const STORE = 'python_nodemap.v1', PREFS = 'python_nodemap.prefs'; // localStorage keys: the project (files, tabs) and the preferences
 const PYODIDE = 'https://cdn.jsdelivr.net/pyodide/v0.29.5/full/'; // pinned: Pyodide 314+ only supports module workers; 0.29 (Python 3.13) works in our classic Blob worker
 // unpacked sizes of what Pyodide downloads (about 5 MB over the wire), used for the progress bar. Re-measure if PYODIDE changes.
@@ -274,8 +273,17 @@ const setStatus = t => { $('#st').textContent = t; };
 // A project holds .py files (modules: they can import each other) and .txt files (plain text: a doctest file like test_klondike.txt,
 // or data for open()). Only the .py files are analysed, drawn on the map and imported.
 const isPy = n => n.endsWith('.py');
-const modsOf = () => Object.keys(S.files).filter(isPy).map(f => f.slice(0, -3)).sort();
-const okName = n => /^[A-Za-z_]\w*\.py$/.test(n) || /^[\w-]+\.txt$/.test(n);
+// Names can have folders: pkg/util.py is the module pkg.util. A folder with nothing in it is kept as an entry "folder/" with no text.
+const isDir = n => n.endsWith('/');
+const dirOf = n => n.slice(0, n.lastIndexOf('/') + 1); // 'pkg/util.py' -> 'pkg/', 'main.py' -> ''
+const under = d => Object.keys(S.files).filter(n => n.startsWith(d)); // everything in a folder, however deep
+const modsOf = () => { // what can be imported: the dotted names, the top-level folders, and (as Python does) whatever sits next to the open file
+  const names = Object.keys(S.files).filter(isPy).map(f => f.slice(0, -3)), here = dirOf(S.active || '');
+  const all = names.flatMap(f => [f.replace(/\//g, '.'), f.split('/')[0], ...(here && f.startsWith(here) && !f.slice(here.length).includes('/') ? [f.slice(here.length)] : [])]);
+  return [...new Set(all)].filter(m => /^[A-Za-z_][\w.]*$/.test(m)).sort();
+};
+// what may be in a project at all (a share link is checked against this, and a name goes into the page's HTML): no .., no absolute paths
+const okName = n => n.length <= 200 && n.replace(/\/$/, '').split('/').every(s => /^[\w-][\w. -]*$/.test(s));
 
 // ---- locked files. A line `# pynodemap lock <password>` in a file makes it unopenable: the explorer shows it with a 🔒, and clicking it
 // asks for the password. A locked file still runs (import it, or press Tests) but its source stays hidden, and Export and Share leave
@@ -320,13 +328,14 @@ const cfg = (() => { // the parsed settings, re-read whenever the settings file 
 // teacher mode: the project has a pynodesettings.py and it is open to you (its password was entered this session, or it has none).
 // Then hidden files are listed again (👻) and can be opened, and Export takes every file, locked ones included.
 const teacher = () => SETTINGS in S.files && (lockOf(SETTINGS) === null || S.unlocked.has(SETTINGS));
-const isHidden = n => cfg().hide.has(n) && !teacher();
-const isReadOnly = n => cfg().readonly.has(n);
+const listed = (set, n) => set.has(n) || [...set].some(h => n.startsWith(h.replace(/\/?$/, '/'))); // the file itself, or a folder it is in
+const isHidden = n => listed(cfg().hide, n) && !teacher();
+const isReadOnly = n => listed(cfg().readonly, n);
 // a locked file can't be opened without its password; a hidden one can't be opened (or seen) at all
 const isLocked = n => isHidden(n) || (lockOf(n) !== null && !S.unlocked.has(n));
 // files an import must not overwrite: locked, hidden or read only (the paste log among them)
 const isProtected = n => isLocked(n) || isReadOnly(n);
-const firstOpenable = skip => Object.keys(S.files).sort().find(n => n !== skip && !isLocked(n));
+const firstOpenable = skip => Object.keys(S.files).sort().find(n => n !== skip && !isDir(n) && !isLocked(n));
 // the files as autocomplete may see them: a locked file's names stay secret
 const visibleFiles = () => Object.fromEntries(Object.entries(S.files).filter(([n]) => isPy(n) && !isHidden(n)).map(([n, s]) => [n, isLocked(n) ? '' : s]));
 // a saved project must never open a locked file by itself, as the active file or in a tab
@@ -355,6 +364,9 @@ const mailboxReady = (async () => {
 })();
 const mailboxUrl = () => (navigator.serviceWorker?.controller ? new URL('__mailbox', location.href).href : ''); // '' = no mailbox
 let pyBusy = false; // Python is executing a run right now (its worker can't take messages): window events go to the mailbox
+// Python read the mailbox for the last time just before it finished, and the page only hears of that later, so what a window sent in between
+// (its first sizes, nearly always; a quick click) is still there. A moment later, so it has reached the service worker too, it's read once more.
+const afterPython = () => setTimeout(() => W.w.postMessage({ type: 'guidrain' }), 60);
 
 // ---- Python lives in a worker (worker.js + runner.py + libs/*/lib.py), so the page never freezes and Stop works
 const W = {
@@ -486,7 +498,7 @@ W.onOut = (text, cls) => {
 $('#out').onclick = e => {
   const a = e.target.closest('a');
   if (a && S.files[a.dataset.file] && !isLocked(a.dataset.file)) { openFile(a.dataset.file); gotoLine(+a.dataset.line); return; }
-  if (!LINE.hidden && !getSelection().toString()) IN.focus({ preventScroll: true }); // a click in the console means "let me type"
+  if (!LINE.hidden && !IN.ownerDocument.getSelection().toString()) IN.focus({ preventScroll: true }); // a click in the console means "let me type"
 };
 $('#clear').onclick = clearOut;
 
@@ -503,7 +515,7 @@ function showLine(prompt, focus) {
 const hideLine = () => { LINE.hidden = true; };
 let more = ''; // an unfinished block typed at the >>> prompt (a `for` line, say): sent again with the next line
 // (the prompt takes the keyboard back if you were typing in the console: its line was hidden while the code ran, so focus fell to <body>)
-const showIdle = (focus = [IN, document.body, null].includes(document.activeElement)) => { if (ready && !job) showLine(more ? '... ' : '>>> ', focus); };
+const showIdle = (focus = [IN, IN.ownerDocument.body, null].includes(IN.ownerDocument.activeElement)) => { if (ready && !job) showLine(more ? '... ' : '>>> ', focus); };
 const hist = [];
 let hpos = 0;
 function wantInput() { // the running program called input() and waits for the answer (runner.ask)
@@ -511,6 +523,35 @@ function wantInput() { // the running program called input() and waits for the a
   job.waiting = 'block';
   setStatus('Waiting for your input…');
   showLine('', true);
+}
+// What a run (or a line at the prompt) did to the project's folder comes back into the project: new and changed files show up in the
+// explorer, deleted ones go. Locked, hidden and read-only files stay as they were. A file that can't be kept is named in the console.
+function applyDisk(disk) {
+  if (!disk) return;
+  const made = [], gone = [], lost = [...disk.skipped];
+  for (const [n, text] of Object.entries(disk.written)) {
+    if (!okName(n)) { lost.push(n); continue; }
+    if (isProtected(n)) continue;
+    const old = S.files[n];
+    S.files[n] = text;
+    if (docs[n] && old !== text) docs[n].setValue(text);
+    if (!isDir(n)) made.push(n);
+  }
+  for (const n of disk.deleted) {
+    if (!(n in S.files) || isProtected(n)) continue;
+    forget(n);
+    S.open = S.open.filter(x => x !== n);
+    if (!isDir(n)) gone.push(n);
+  }
+  if (!(S.active in S.files)) {
+    if (!firstOpenable()) S.files['untitled.py'] = '';
+    openFile(S.open[0] || firstOpenable());
+  }
+  applySettings();
+  save();
+  if (made.length) out(`\nFiles written: ${made.join(', ')}\n`, 'dim');
+  if (gone.length) out(`\nFiles deleted: ${gone.join(', ')}\n`, 'dim');
+  if (lost.length) out(`\nNot kept after this run (not text, too big, or an odd name): ${lost.join(', ')}\n`, 'dim');
 }
 async function shellLine(v) {
   out(LINE.dataset.p, 'dim');
@@ -531,10 +572,12 @@ async function shellLine(v) {
   } finally {
     pyBusy = false;
   }
+  afterPython();
   job = null;
   setRunning(false); setStatus('Ready');
   more = res?.more ? src : '';
   if (res?.files) liveTrace(res.files); // calls into the program's functions update its values on the map
+  applyDisk(res?.disk);
   drainOut();
   showIdle();
 }
@@ -693,13 +736,30 @@ function showHints() { // draw the analyser's hints: a squiggle under the line, 
 }
 
 // ---- files: explorer + tabs
+const closedDirs = new Set(); // the folders collapsed in the explorer
 function chrome() { // re-render the tab strip, the explorer list and the map's title from S
   $('#tabs').innerHTML = S.open.map(n => `<div class="tab${n === S.active ? ' on' : ''}" data-f="${n}">${n}<b data-x="${n}">×</b></div>`).join('');
-  $('#files').innerHTML = Object.keys(S.files).filter(n => !isHidden(n)).sort().map(n => {
-    const lk = lockOf(n) !== null, shut = isLocked(n), ro = isReadOnly(n), ghost = cfg().hide.has(n); // 🔒 = locked, 🔓 = locked but its password was entered this session
+  const fileRow = (n, depth) => {
+    const lk = lockOf(n) !== null, shut = isLocked(n), ro = isReadOnly(n), ghost = listed(cfg().hide, n); // 🔒 = locked, 🔓 = locked but its password was entered this session
     const tip = (ghost ? 'Hidden from students (you see it in teacher mode). ' : '') + (lk ? (shut ? 'Locked: click to enter the password' : 'A locked file, open for this session') : ro ? 'Read only: it opens, but it can\'t be changed' : '');
-    return `<li class="${n === S.active ? 'on' : ''}${shut ? ' locked' : ''}${ghost ? ' ghost' : ''}" data-f="${n}"${tip ? ` title="${tip}"` : ''}><span>${ghost ? '👻 ' : ''}${lk ? (shut ? '🔒 ' : '🔓 ') : ro ? '👁 ' : ''}${n}</span>${shut || ro ? '' : `<i data-ren="${n}" title="Rename">✎</i><i data-del="${n}" title="Delete">✕</i>`}</li>`;
-  }).join('');
+    return `<li class="${n === S.active ? 'on' : ''}${shut ? ' locked' : ''}${ghost ? ' ghost' : ''}" data-f="${n}" style="padding-left:${18 + depth * 14}px"${tip ? ` title="${tip}"` : ''}><span>${ghost ? '👻 ' : ''}${lk ? (shut ? '🔒 ' : '🔓 ') : ro ? '👁 ' : ''}${n.slice(dirOf(n).length)}</span>${shut || ro ? '' : `<i data-ren="${n}" title="Rename or move (a path moves it to that folder)">✎</i><i data-del="${n}" title="Delete">✕</i>`}</li>`;
+  };
+  const root = { dirs: {}, files: [] }; // the visible files as a tree: folders first, then files, each sorted
+  for (const n of Object.keys(S.files).filter(n => !isHidden(n))) {
+    const parts = n.split('/'), last = parts.pop();
+    let at = root;
+    parts.forEach((p, i) => { at = at.dirs[p] ||= { path: parts.slice(0, i + 1).join('/') + '/', name: p, dirs: {}, files: [] }; });
+    if (last) at.files.push(n);
+  }
+  const rows = (node, depth) => [
+    ...Object.keys(node.dirs).sort().flatMap(k => {
+      const d = node.dirs[k], shut = closedDirs.has(d.path);
+      return [`<li class="dir" data-d="${d.path}" style="padding-left:${6 + depth * 14}px"><b>${shut ? '▸' : '▾'}</b><span>${d.name}</span><i data-newin="${d.path}" title="New file in this folder">+</i><i data-rend="${d.path}" title="Rename or move this folder">✎</i><i data-deld="${d.path}" title="Delete this folder">✕</i></li>`,
+        ...(shut ? [] : rows(d, depth + 1))];
+    }),
+    ...node.files.sort().map(n => fileRow(n, depth)),
+  ];
+  $('#files').innerHTML = rows(root, 0).join('');
   $('#mapname').textContent = '· ' + S.active;
   $('#edu').hidden = S.active !== SETTINGS; // (you can only be viewing it if it is unlocked)
   $('#grade').hidden = S.active !== SETTINGS && !cfg().selfgrade; // `# self grade: true` puts it on every file
@@ -741,6 +801,7 @@ function openFile(n) { // make n the active file (adding a tab if needed) and re
   if (isLocked(n)) { unlock(n).then(ok => { if (ok) openFile(n); }); return; } // a locked file asks for its password first
   if (!S.open.includes(n)) S.open.push(n);
   S.active = n;
+  for (const d of closedDirs) if (n.startsWith(d)) closedDirs.delete(d);
   cm.swapDoc(docOf(n));
   foldLockLines(cm.getDoc());
   cm.setOption('readOnly', isReadOnly(n));
@@ -753,15 +814,32 @@ function closeTab(n) {
   if (!S.open.length) S.open = [firstOpenable(n) || n];
   openFile(S.active === n || !S.open.includes(S.active) ? S.open[0] : S.active);
 }
-function askName(msg, def) { // ask for a file name: name.py (letters, digits, _ so `import name` works) or name.txt
-  let n = (prompt(msg, def) || '').trim();
+function askName(msg, def) { // ask for a file name, with folders if you like: name.py (letters, digits, _ so `import name` works) or a text file
+  let n = (prompt(msg, def) || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
   if (!n) return null;
-  if (!/\.(py|txt)$/.test(n)) n += '.py';
-  if (!okName(n)) { alert('Use letters, digits and _ only (so it can be imported), e.g. my_module.py, or a text file such as tests.txt'); return null; }
+  if (!/\.\w+$/.test(n)) n += '.py';
+  const parts = n.split('/'), last = parts.pop();
+  if (!parts.every(p => /^[\w-][\w.-]*$/.test(p)) || !(n.endsWith('.py') ? /^[A-Za-z_]\w*\.py$/ : /^[\w-][\w.-]*$/).test(last)) {
+    alert('Use letters, digits and _ only (so it can be imported), e.g. my_module.py, or a text file such as tests.txt. A folder goes in front: data/tests.txt');
+    return null;
+  }
   return n;
 }
-function newFile() {
-  const n = askName('New file name:', 'untitled.py');
+function askFolder(msg, def) { // ask for a folder's name (with the folders it is in, if any) -> 'a/b/'
+  const n = (prompt(msg, def) || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (!n) return null;
+  if (!n.split('/').every(p => /^[\w-][\w.-]*$/.test(p))) { alert('Use letters, digits, _ and - for a folder name.'); return null; }
+  return n + '/';
+}
+function newFolder(dir = '') {
+  const d = askFolder('New folder name:', dir + 'folder');
+  if (!d) return;
+  if (!under(d).length) S.files[d] = '';
+  closedDirs.delete(d);
+  chrome(); save();
+}
+function newFile(dir = '') {
+  const n = askName('New file name:', dir + 'untitled.py');
   if (!n) return;
   if (!(n in S.files)) S.files[n] = n === GRADER ? graderTemplate() : '';
   openFile(n);
@@ -811,6 +889,10 @@ function renameFile(old) {
   const n = askName('Rename to:', old);
   if (!n || n === old) return;
   if (n in S.files) return alert(n + ' already exists.');
+  moveFile(old, n);
+  afterMove(dirOf(old));
+}
+function moveFile(old, n) { // a new name or folder: its text, document, tab and unlocked state go along
   const src = S.files[old], doc = isPy(old) === isPy(n) ? docs[old] : null; // (.py <-> .txt changes the highlighting: it gets a fresh document)
   forget(old);
   S.files[n] = src;
@@ -818,24 +900,56 @@ function renameFile(old) {
   if (doc) docs[n] = doc;
   S.open = S.open.map(x => (x === old ? n : x));
   if (S.active === old) { S.active = n; cm.swapDoc(docOf(n)); }
+}
+function afterMove(left) { // files were moved or deleted: the folder they left stays, even if empty; the last run no longer matches
+  if (left && !under(left).length) S.files[left] = '';
   S.tl = null; S.step = null; S.error = null; S.cover = null;
   chrome(); save(); showMarks(); updateStepper(); refresh();
+}
+function renameFolder(d) {
+  const names = under(d);
+  if (names.some(isProtected)) return alert(`${d} holds locked or read-only files, so it can't be renamed.`);
+  const nd = askFolder('Rename or move the folder to:', d.slice(0, -1));
+  if (!nd || nd === d) return;
+  if (nd.startsWith(d)) return alert("A folder can't be moved into itself.");
+  if (under(nd).length) return alert(nd + ' already exists.');
+  names.forEach(f => moveFile(f, nd + f.slice(d.length)));
+  afterMove('');
+}
+function deleteFolder(d) {
+  const names = under(d), files = names.filter(n => !isDir(n));
+  if (names.some(isProtected)) return alert(`${d} holds locked or read-only files, so it can't be deleted.`);
+  if (!Object.keys(S.files).some(n => !n.startsWith(d) && !isDir(n) && !isLocked(n))) return alert('Keep at least one file that can be opened.');
+  if (files.length && !confirm(`Delete ${d} and the ${files.length} file${files.length === 1 ? '' : 's'} in it? This can't be undone.`)) return;
+  names.forEach(forget);
+  S.open = S.open.filter(x => !x.startsWith(d));
+  if (!S.open.length) S.open = [firstOpenable()];
+  S.tl = null; S.step = null; S.error = null; S.cover = null;
+  openFile(S.active.startsWith(d) ? S.open[0] : S.active);
 }
 function deleteFile(n) {
   if (isProtected(n)) return;
   if (Object.keys(S.files).length < 2 || !firstOpenable(n)) return alert('Keep at least one file that can be opened.');
   if (!confirm(`Delete ${n}? This can't be undone.`)) return;
   forget(n);
+  if (dirOf(n) && !under(dirOf(n)).length) S.files[dirOf(n)] = ''; // the folder stays, empty
   S.open = S.open.filter(x => x !== n);
   if (!S.open.length) S.open = [firstOpenable()];
   S.tl = null; S.step = null; S.error = null; S.cover = null;
   openFile(S.active === n ? S.open[0] : S.active);
 }
-$('#new').onclick = newFile;
+$('#new').onclick = () => newFile();
+$('#new-dir').onclick = () => newFolder();
 $('#tabs').onclick = e => (e.target.dataset.x ? closeTab(e.target.dataset.x) : e.target.closest('.tab') && openFile(e.target.closest('.tab').dataset.f));
 $('#files').onclick = e => {
-  const d = e.target.dataset;
-  if (d.ren) renameFile(d.ren); else if (d.del) deleteFile(d.del); else if (e.target.closest('li')) openFile(e.target.closest('li').dataset.f);
+  const d = e.target.dataset, li = e.target.closest('li');
+  if (d.ren) renameFile(d.ren);
+  else if (d.del) deleteFile(d.del);
+  else if (d.newin) newFile(d.newin);
+  else if (d.rend) renameFolder(d.rend);
+  else if (d.deld) deleteFolder(d.deld);
+  else if (li?.dataset.d) { closedDirs.has(li.dataset.d) ? closedDirs.delete(li.dataset.d) : closedDirs.add(li.dataset.d); chrome(); }
+  else if (li) openFile(li.dataset.f);
 };
 
 // ---- find / replace (Ctrl+F, Ctrl+H): a bar over the editor. Every match is highlighted and the count says which one is selected;
@@ -1075,7 +1189,7 @@ function applyPrefs() {
   for (const k of ['data', 'call', 'back', 'only']) $('#w-' + k).setAttribute('aria-pressed', P[k]);
   cm.refresh();
   store(PREFS, P);
-  syncPip();
+  PopOut.sync();
   draw(); // the node map has its own light palette
 }
 for (const k of ['data', 'call', 'back', 'only']) $('#w-' + k).onclick = () => { P[k] = !P[k]; applyPrefs(); };
@@ -1165,6 +1279,7 @@ async function attempt() { // one execution of the job; asks for more input and 
   } finally {
     pyBusy = false;
   }
+  afterPython();
   if (job !== j) return;
   if (res?.need_input) { // (no service worker: the answer is collected, then the program runs again from the top)
     j.waiting = 'replay';
@@ -1181,6 +1296,7 @@ function finish(res, t0) { // a run ended: store its results, show the final val
   setStatus('Ready');
   if (res) { S.trace = res.files; S.tl = res.timeline; S.step = null; S.views = null; S.error = res.error; }
   if (cover && res?.cover) { S.cover = res.cover.files; out('\n' + res.cover.report + '\n'); }
+  applyDisk(res?.disk);
   out(`\n[${res?.gui ? 'script finished, window still open (close it or press Run to end it)' : 'finished'} in ${Math.round(performance.now() - t0)} ms]\n`, 'dim');
   drainOut(); // a run has ended: whatever it printed is on the console now, not up to 30 ms later
   showIdle(); // ... and the >>> prompt is open on what it left behind
@@ -1255,11 +1371,12 @@ const download = (blob, name) => {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1e4);
 };
-const isFile = n => /\.(py|txt)$/i.test(n); // the kinds of file a project holds
-const safeName = p => { // a file name from a path: spaces and odd characters become _, a .py can't start with a digit
-  const base = p.split(/[\\/]/).pop(), txt = /\.txt$/i.test(base);
-  const n = base.replace(/\.(py|txt)$/i, '').replace(txt ? /[^\w-]/g : /\W/g, '_') || 'file';
-  return txt ? n + '.txt' : (/^\d/.test(n) ? '_' : '') + n + '.py';
+const isFile = n => /\.(py|txt|csv|tsv|md|json|log|dat|ini|xml)$/i.test(n); // the kinds of file Import brings in
+const safeDir = s => s.replace(/[^\w-]/g, '_') || 'folder';
+const safeName = p => { // a project name from a path, folders kept: spaces and odd characters become _, a .py can't start with a digit
+  const parts = p.split(/[\\/]/).filter(Boolean), base = parts.pop(), ext = /\.\w+$/.exec(base)?.[0].toLowerCase() ?? '', py = ext === '.py';
+  const n = base.slice(0, base.length - ext.length).replace(py ? /\W/g : /[^\w-]/g, '_') || 'file';
+  return [...parts.map(safeDir), (py && /^\d/.test(n) ? '_' : '') + n + ext].join('/');
 };
 function mergeFiles(got) { // adds the given files to the project, replacing those with the same name (but never a protected one)
   const names = Object.keys(got).filter(n => !isProtected(n));
@@ -1267,7 +1384,7 @@ function mergeFiles(got) { // adds the given files to the project, replacing tho
   names.forEach(n => { S.files[n] = got[n]; docs[n]?.setValue(got[n]); delete S.trace[n]; });
   S.tl = null; S.step = null; S.error = null; S.cover = null;
   applySettings();
-  const first = names.find(n => isPy(n) && !isLocked(n)) ?? names.find(n => !isLocked(n));
+  const first = names.find(n => isPy(n) && !isLocked(n)) ?? names.find(n => !isLocked(n) && !isDir(n));
   if (first) openFile(first); else chrome();
 }
 function replaceProject(got) { // a zip or a share link is a whole project: everything already in the explorer is removed
@@ -1281,7 +1398,7 @@ function replaceProject(got) { // a zip or a share link is a whole project: ever
   Object.assign(S, { trace: {}, graph: {}, key: {}, err: {}, hints: {}, fold: {}, tl: null, step: null, views: null, error: null, cover: null, ranFiles: null });
   S.unlocked = new Set(); // a different project: its locked files are locked again
   // open main.py if there is one, else a .py file (not the teacher's settings), else anything that may be opened
-  let first = [...(names.includes('main.py') ? ['main.py'] : []), ...names.filter(n => isPy(n) && n !== SETTINGS), ...names].find(n => !isLocked(n));
+  let first = [...(names.includes('main.py') ? ['main.py'] : []), ...names.filter(n => isPy(n) && n !== SETTINGS), ...names.filter(n => !isDir(n))].find(n => !isLocked(n));
   if (!first) { S.files['untitled.py'] = ''; first = 'untitled.py'; } // nothing but locked files
   S.open = [first];
   openFile(first);
@@ -1291,7 +1408,7 @@ function replaceProject(got) { // a zip or a share link is a whole project: ever
 // replacing the whole project or adding these files to it. Resolves 'replace', 'add' or null (cancelled). With nothing to import it just
 // shows `note`.
 function askImport(got, how, note = '') {
-  const dlg = $('#imp-dlg'), names = Object.keys(got).sort(), mine = Object.keys(S.files).filter(n => !isHidden(n));
+  const dlg = $('#imp-dlg'), names = Object.keys(got).filter(n => !isDir(n)).sort(), mine = Object.keys(S.files).filter(n => !isHidden(n) && !isDir(n));
   $('#imp-title').textContent = !names.length ? 'Nothing to import' : how === 'link' ? 'Open a shared project' : how === 'sample' ? 'Reset to the sample project'
     : `Import ${names.length} file${names.length === 1 ? '' : 's'}`;
   $('#imp-list').innerHTML = names.map(n => {
@@ -1324,12 +1441,21 @@ async function importFiles(list) { // .py / .txt files, or .zip files of them: t
     if (/\.zip$/i.test(f.name)) {
       zipped = true;
       const z = await JSZip.loadAsync(f);
-      for (const e of Object.values(z.files)) {
-        if (!e.dir && isFile(e.name) && !/(^|\/)__MACOSX\//.test(e.name)) got[safeName(e.name)] = await e.async('string');
+      // folders are kept, except junk (__MACOSX, __pycache__, anything hidden such as .git) and one folder wrapping the whole zip
+      const entries = Object.values(z.files).filter(e => !/(^|\/)(__MACOSX|__pycache__|\.[^/]*)(\/|$)/.test(e.name));
+      const tops = new Set(entries.map(e => e.name.split('/')[0]));
+      const wrap = tops.size === 1 && entries.some(e => e.name.includes('/')) ? [...tops][0] + '/' : '';
+      for (const e of entries) {
+        const rel = e.name.slice(wrap.length);
+        if (rel && !e.dir && isFile(rel)) got[safeName(rel)] = await e.async('string');
+      }
+      for (const e of entries) { // a folder with nothing to import in it is kept as an empty folder
+        const rel = e.name.slice(wrap.length), d = rel.split('/').filter(Boolean).map(safeDir).join('/') + '/';
+        if (rel && e.dir && !Object.keys(got).some(n => n.startsWith(d))) got[d] = '';
       }
     } else if (isFile(f.name)) got[safeName(f.name)] = await f.text();
   }
-  if (!Object.keys(got).length) return askImport({}, 'files', 'There are no .py or .txt files in that.');
+  if (!Object.keys(got).length) return askImport({}, 'files', 'There are no .py or text files in that.');
   return bringIn(got, zipped ? 'zip' : 'files');
 }
 $('#imp').onclick = () => $('#pick').click();
@@ -1348,6 +1474,7 @@ $('#exp').onclick = async () => { // a zip with every file and, for each .py, a 
   setStatus('Exporting…');
   const zip = new JSZip(), left = [];
   for (const [name, src] of Object.entries(outgoing())) {
+    if (isDir(name)) { if (!isHidden(name) || teacher()) zip.folder(name); continue; }
     if (isLocked(name) && !teacher()) { left.push(name); continue; } // a locked file is not handed out (unless you are the teacher)
     zip.file(name, src);
     if (!isPy(name) || isLocked(name)) continue;
@@ -1400,47 +1527,33 @@ async function loadShared() { // open a #p= share link (validated: file names, s
 }
 addEventListener('hashchange', loadShared);
 
-// ---- pop the node map out into a window of its own. Where the browser has Document Picture-in-Picture (Chrome, Edge) it floats above
-// every other window, like a video; elsewhere it is an ordinary popup. The panel itself moves there (its buttons keep working, and `$`
-// looks in that window too); closing the window, or ⤓ in it, puts it back.
-function syncPip() { // the popped-out map follows the theme and font size
-  if (!pipWin) return;
-  pipWin.document.body.className = document.body.className + ' pip';
-  pipWin.document.body.style.cssText = document.body.style.cssText;
+// ---- pop the node map or the console out into a window of its own (PopOut). The panel itself moves there, so its buttons keep working and
+// `$` still finds it; closing the window, or ⤓ in it, puts it back.
+for (const p of [
+  { btn: '#pop', panel: '#mapp', split: '#vsplit', title: 'Node map', what: 'the node map', w: 720, h: 560 },
+  { btn: '#con-pop', panel: '#con', split: '#hsplit', title: 'Console', what: 'the console', w: 720, h: 420 },
+]) {
+  const btn = $(p.btn), panel = $(p.panel), split = $(p.split);
+  const label = on => {
+    btn.textContent = on ? '⤓' : '⧉';
+    btn.title = on ? `Put ${p.what} back in the page` : `Pop ${p.what} out into its own window (it stays on top of other windows where the browser allows)`;
+    split.hidden = on;
+    $('#out').scrollTop = 1e9; // (moving an element loses its scroll position)
+    if (panel.contains(IN) && !LINE.hidden) IN.focus({ preventScroll: true });
+    cm.refresh();
+    applyZoom();
+  };
+  let win = null;
+  btn.onclick = async () => {
+    if (win) return win.close();
+    win = await PopOut.open(`${p.title} · Python Nodemap`, p.w, p.h, () => { win = null; split.after(panel); label(false); });
+    if (!win) return setStatus(`Couldn't pop out ${p.what}: the browser blocked the window.`);
+    win.document.body.append(panel);
+    win.addEventListener('resize', applyZoom);
+    label(true);
+  };
+  label(false);
 }
-async function popMap() {
-  if (pipWin) return pipWin.close();
-  let w = null;
-  try { w = await window.documentPictureInPicture?.requestWindow({ width: 720, height: 560 }); } catch {} // (refused: try a popup)
-  w ||= open('', 'pynodemap-map', 'popup,width=760,height=600');
-  if (!w) return setStatus("The node map couldn't be popped out: the browser blocked the window.");
-  const d = w.document, panel = $('#mapp');
-  d.title = 'Node map · Python Nodemap';
-  document.querySelectorAll('link[rel="stylesheet"], style').forEach(n => d.head.append(n.cloneNode(true)));
-  pipWin = w;
-  syncPip();
-  d.body.append(panel);
-  $('#vsplit').hidden = true;
-  $('#pop').textContent = '⤓';
-  $('#pop').title = 'Put the node map back in the page';
-  w.addEventListener('pagehide', unpopMap);
-  w.addEventListener('resize', applyZoom);
-  cm.refresh();
-  applyZoom();
-}
-function unpopMap() {
-  if (!pipWin) return;
-  const panel = pipWin.document.querySelector('#mapp');
-  pipWin = null;
-  $('#vsplit').after(panel);
-  $('#vsplit').hidden = false;
-  $('#pop').textContent = '⧉';
-  $('#pop').title = 'Pop the node map out into its own window (it stays on top of other windows where the browser allows)';
-  cm.refresh();
-  applyZoom();
-}
-$('#pop').onclick = popMap;
-addEventListener('pagehide', () => pipWin?.close());
 
 // apply pynodesettings.py: hidden files leave the tabs, read-only ones can't be typed in, the Grade button appears
 function applySettings() {

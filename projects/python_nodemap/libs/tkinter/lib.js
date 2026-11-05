@@ -1,6 +1,7 @@
 /* The tkinter library. lib.py is the tkinter look-alike (the widgets, as plain Python objects). This file is the other half:
-   it draws the widget tree that lib.py posts as floating HTML windows, and sends clicks, typing and
-   mouse/key events back to Python. Layout: pack = nested flex "cavity" bands (Tk's own model), grid = CSS grid,
+   it draws the widget tree that lib.py posts in real browser windows (PopOut in libs.js), and sends clicks, typing and
+   mouse/key events back to Python. Each Tk or Toplevel is first laid out, unseen, in #tkhost, which gives the size it asks for; then a window
+   of that size opens and the elements move into it. Layout: pack = nested flex "cavity" bands (Tk's own model), grid = CSS grid,
    place = absolute positioning. Widget elements are reused between updates so typing and focus survive redraws.
    A Canvas is a wrapper <div> that layout sizes (width/height are only its requested size; pack fill/expand can make it larger,
    as in Tk); the <canvas> inside is resized to match, so drawing and mouse coordinates are 1:1 and never scaled. */
@@ -11,10 +12,11 @@
     // where 'ev' is a mouse or key event (k = press, release, double, motion, enter, leave, wheel, key, keyup). `wants` = the kinds
     // some binding listens to (from the tree), so we do not send mouse moves nobody asked for. z = next window stacking order,
     // focusN = the last focus_set() serial we obeyed.
-    let send = () => {}, wants = new Set(), z = 20, focusN = 0;
-    const wins = new Map(); // window id -> { el, body, bar, menubar, els: Map(widget id -> element) }
+    let send = () => {}, wants = new Set(), focusN = 0, focusId = null;
+    const wins = new Map(); // window id -> { id, el, body, title, menubar, els: Map(widget id -> element), pop: its real window, ro, chip, opening }
     const host = () => document.getElementById('tkhost');
-    const mk = (tag, cls, parent) => { const e = document.createElement(tag); if (cls) e.className = cls; if (parent) parent.append(e); return e; };
+    let doc = document; // the document of the window being drawn: where new elements are made
+    const mk = (tag, cls, parent) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (parent) parent.append(e); return e; };
     const CONTAINERS = new Set(['frame', 'labelframe']);
 
     // ---------------------------------------------------------------- values: fonts, colours, anchors
@@ -90,7 +92,7 @@
           break;
         case 'combobox': case 'optionmenu': case 'combobox!': {
           if (t === 'combobox') { // editable: text box + suggestions
-            e = mk('input', 'tk tk-entry'); e._dl = mk('datalist', '', document.body); e._dl.id = 'dl' + n.id; e.setAttribute('list', e._dl.id);
+            e = mk('input', 'tk tk-entry'); e._dl = mk('datalist', '', doc.body); e._dl.id = 'dl' + n.id; e.setAttribute('list', e._dl.id);
             e.oninput = ev => send({ t: 'value', id: e._id, v: e.value, sel: !ev.inputType || ev.inputType === 'insertReplacementText' });
           } else {
             e = mk('select', 'tk tk-entry');
@@ -104,11 +106,7 @@
         case 'canvas': {
           // e is what layout positions (and what mouse events measure against); e._cv is the bitmap, always the same size as e
           e = mk('div', 'tk tk-canvas'); e.tabIndex = 0; // focusable, so key bindings (turtle's onkey) work
-          e._cv = mk('canvas', '', e);
-          new ResizeObserver(([en]) => { // layout gave it a new size (first layout, pack expand, the user resizing the window)
-            e._w = Math.round(en.contentRect.width); e._h = Math.round(en.contentRect.height);
-            if (e._n) drawCanvas(e, e._n);
-          }).observe(e);
+          e._cv = mk('canvas', '', e); // (watch() follows its size)
           break;
         }
         case 'labelframe': e = mk('fieldset', 'tk tk-frame tk-labelframe'); e._legend = mk('legend', '', e); break;
@@ -264,6 +262,12 @@
       [b.style.justifyContent, b.style.alignItems] = ANCHOR[m.anchor] || ANCHOR.center;
       if (m.fill === 'x' || m.fill === 'both') b.classList.add('fx');
       if (m.fill === 'y' || m.fill === 'both') b.classList.add('fy');
+      // what may get smaller than it asked for when the window does (style.css, .popped): a fill across the band always; along it only if
+      // this slave expands, since otherwise its band is only as long as what it asked for
+      const tall = m.side === 'top' || m.side === 'bottom', fx = b.classList.contains('fx'), fy = b.classList.contains('fy');
+      b.classList.toggle('gw', fx && (!!m.expand || tall));
+      b.classList.toggle('gh', fy && (!!m.expand || !tall));
+      b.classList.toggle('gs', !!m.expand && (tall ? fy : fx));
       if (m.ipadx || m.ipady) k.el.style.padding = `${m.ipady}px ${m.ipadx}px`;
       b.append(k.el);
       return b;
@@ -328,15 +332,15 @@
     function render(n, ctx) {
       const kind = n.t === 'combobox' && n.o.state === 'readonly' ? 'combobox!' : n.t;
       let e = ctx.els.get(n.id);
-      if (!e || e._variant !== kind) { e = make({ ...n, t: kind }); e._variant = kind; e._t = n.t; ctx.els.set(n.id, e); }
+      if (!e || e._variant !== kind) { e = make({ ...n, t: kind }); e._variant = kind; e._t = n.t; ctx.els.set(n.id, e); ctx.ro.observe(e); }
       update(e, n);
       if (n.k) renderChildren(e._inner, n, ctx);
       return e;
     }
     function renderChildren(inner, node, ctx) {
       const kids = node.k.map(kn => ({ n: kn, el: render(kn, ctx) }));
-      const sig = JSON.stringify([kids.map(k => [k.n.id, k.n.m]), node.cw]);
-      if (inner._sig !== sig) { layout(inner, kids); inner._sig = sig; }
+      const sig = JSON.stringify([kids.map(k => [k.n.id, k.n.m, k.n.o.width, k.n.o.height]), node.cw]);
+      if (inner._sig !== sig) { layout(inner, kids); inner._sig = sig; ctx.relaid = true; }
       if (kids.some(k => k.n.m.k === 'grid')) gridTemplates(inner, kids.filter(k => k.n.m.k === 'grid'), node.cw);
       ctx.live.push(...kids.map(k => k.n.id));
     }
@@ -350,7 +354,7 @@
         mk('span', '', b).textContent = (it.k === 'check' || it.k === 'radio' ? (it.c ? '✓ ' : '   ') : '') + it.label;
         if (it.acc) mk('i', 'tkacc', b).textContent = it.acc;
         if (it.k === 'cascade') { b.classList.add('sub'); b.append(menuEl(it.items || [], false)); }
-        else b.onclick = e => { e.stopPropagation(); send({ t: 'menu', m: it.id }); document.activeElement?.blur(); };
+        else b.onclick = e => { e.stopPropagation(); send({ t: 'menu', m: it.id }); b.ownerDocument.activeElement?.blur(); };
       }
       return box;
     }
@@ -368,11 +372,11 @@
       const base = (ev, target) => { const r = target.getBoundingClientRect(); return { t: 'ev', id: +target.dataset.wid, x: ev.clientX - r.left, y: ev.clientY - r.top, rx: ev.screenX, ry: ev.screenY, ctrl: ev.ctrlKey, shift: ev.shiftKey, alt: ev.altKey,
         btn: (ev.buttons & 1 ? 1 : 0) | (ev.buttons & 4 ? 2 : 0) | (ev.buttons & 2 ? 4 : 0) }; };
       const mouse = (kind, ev, target = nearest(ev.target)) => { if (target && wants.has(kind)) send({ ...base(ev, target), k: kind, num: ev.button + 1 }); };
-      win.addEventListener('mousedown', ev => { win.style.zIndex = ++z; mouse('press', ev); });
+      win.addEventListener('mousedown', ev => mouse('press', ev));
       win.addEventListener('mouseup', ev => mouse('release', ev));
       win.addEventListener('dblclick', ev => mouse('double', ev));
       let raf = 0;
-      win.addEventListener('mousemove', ev => { if (raf || !wants.has('motion')) return; raf = requestAnimationFrame(() => { raf = 0; mouse('motion', ev); }); });
+      win.addEventListener('mousemove', ev => { if (raf || !wants.has('motion')) return; raf = ev.view.requestAnimationFrame(() => { raf = 0; mouse('motion', ev); }); });
       win.addEventListener('mouseover', ev => { const a = nearest(ev.target); if (a && a !== nearest(ev.relatedTarget)) mouse('enter', ev, a); });
       win.addEventListener('mouseout', ev => { const a = nearest(ev.target); if (a && a !== nearest(ev.relatedTarget)) mouse('leave', ev, a); });
       win.addEventListener('wheel', ev => { if (wants.has('wheel')) mouse('wheel', ev); if (wants.has('wheel')) ev.preventDefault(); }, { passive: false });
@@ -386,50 +390,123 @@
       win.addEventListener('keyup', ev => key('keyup', ev));
     }
 
-    function drawWin(node, index) {
+    // Tell Python the real sizes (winfo_width(), <Configure>) and redraw canvases at theirs. An observer belongs to the window it watches in:
+    // the page's own stops while its tab is hidden, which is exactly when a floating window is in use. So a window that moves gets a new one.
+    function watch(w) {
+      w.ro?.disconnect();
+      w.ro = new w.el.ownerDocument.defaultView.ResizeObserver(seen => {
+        const sizes = [];
+        for (const { target: e } of seen) {
+          if (!e.offsetWidth && !e.offsetHeight) continue; // not on show
+          sizes.push([+e.dataset.wid, e.offsetWidth, e.offsetHeight]);
+          if (e._t === 'canvas') { e._w = e.offsetWidth; e._h = e.offsetHeight; if (e._n) drawCanvas(e, e._n); }
+        }
+        if (sizes.length) send({ t: 'resize', sizes });
+      });
+      w.ro.observe(w.body);
+      w.els.forEach(e => w.ro.observe(e));
+    }
+    function moveTo(w, parent) {
+      parent.append(w.el);
+      w.els.forEach(e => e._dl && parent.ownerDocument.body.append(e._dl)); // a list= only finds its datalist in the same document
+      watch(w);
+    }
+    const focusOn = w => { const e = w.els.get(focusId); if (e) (e._in || e).focus(); };
+
+    function popOpen(w) { // open w's real window, at the size it was laid out at (a Picture-in-Picture window also gets a title bar: it shows none of its own)
+      w.el.classList.toggle('dp', PopOut.pipFree());
+      const r = w.el.getBoundingClientRect();
+      w.opening = PopOut.open(w.text, Math.ceil(r.width), Math.ceil(r.height), () => popClosed(w)).then(pop => {
+        w.opening = null;
+        if (w.gone) return pop?.close();
+        if (!pop) { w.el.classList.remove('dp'); return askOpen(w); }
+        w.pop = pop;
+        w.chip?.remove(); w.chip = null;
+        w.el.classList.add('popped');
+        w.el.classList.toggle('dp', PopOut.isPip(pop));
+        moveTo(w, pop.document.body);
+        w.el.focus(); // keys only reach a window with something focused in it
+        focusOn(w);
+      });
+    }
+    function popClosed(w) { // the window is gone: closed by the user, or by us (quiet)
+      w.pop = null;
+      if (w.gone) return;
+      w.el.classList.remove('popped', 'dp');
+      moveTo(w, host());
+      if (w.quiet) { w.quiet = false; return; }
+      send({ t: 'close', id: w.id });
+      // normally Python now destroys it; a WM_DELETE_WINDOW handler may keep it, and then it needs a way back
+      w.wait = true;
+      setTimeout(() => { w.wait = false; if (!w.gone && !w.pop && !w.opening && !w.hidden) askOpen(w); }, 1000);
+    }
+    function askOpen(w) { // no window without a recent click (the program took too long, or the browser blocked it): ask for one
+      if (w.chip) return;
+      doc = document;
+      w.chip = mk('div', 'tkchip', host());
+      mk('span', '', w.chip).textContent = `Your program opened "${w.text}".`;
+      mk('button', '', w.chip).textContent = 'Open window';
+      w.chip.children[1].onclick = () => popOpen(w);
+      const x = mk('b', 'tkx', w.chip);
+      x.textContent = '✕'; x.title = 'Close';
+      x.onclick = () => send({ t: 'close', id: w.id });
+    }
+
+    function drawWin(node) {
       let w = wins.get(node.id);
       if (!w) {
+        doc = document;
         const e = mk('div', 'tkwin', host());
         e.dataset.wid = node.id; e.tabIndex = 0;
-        e.style.left = 130 + index * 30 + 'px'; e.style.top = 96 + index * 30 + 'px'; e.style.zIndex = ++z;
-        const bar = mk('div', 'tktitle', e);
-        const title = mk('span', '', bar), x = mk('b', 'tkx', bar);
-        x.textContent = '✕'; x.title = 'Close';
-        x.onclick = () => send({ t: 'close', id: node.id });
-        const menubar = mk('div', 'tkmenubar', e), body = mk('div', 'tkbody', e);
-        body._inner = body;
-        bar.addEventListener('pointerdown', ev => { // drag by the title bar
-          if (ev.target === x) return;
-          const dx = ev.clientX - e.offsetLeft, dy = ev.clientY - e.offsetTop;
-          bar.setPointerCapture(ev.pointerId);
-          const mv = m => { e.style.left = Math.max(-200, m.clientX - dx) + 'px'; e.style.top = Math.max(0, m.clientY - dy) + 'px'; };
-          const up = () => { bar.removeEventListener('pointermove', mv); bar.removeEventListener('pointerup', up); };
-          bar.addEventListener('pointermove', mv); bar.addEventListener('pointerup', up);
-        });
+        const title = mk('div', 'tktitle', e), menubar = mk('div', 'tkmenubar', e), body = mk('div', 'tkbody', e);
+        body._inner = body; body.dataset.wid = node.id;
         wire(e);
-        w = { el: e, body, bar, title, menubar, els: new Map() };
+        w = { id: node.id, el: e, body, title, menubar, els: new Map() };
         wins.set(node.id, w);
+        watch(w);
       }
-      w.title.textContent = node.o.title ?? 'tk';
-      w.el.style.display = node.o.withdrawn ? 'none' : '';
+      doc = w.el.ownerDocument;
+      const active = doc.activeElement, caret = active && 'selectionStart' in active ? [active.selectionStart, active.selectionEnd] : null;
+      w.text = node.o.title ?? 'tk';
+      w.title.textContent = w.text;
+      if (w.pop) w.pop.document.title = w.text;
+      if (w.chip) w.chip.firstChild.textContent = `Your program opened "${w.text}".`;
+      w.hidden = !!node.o.withdrawn;
+      w.el.style.display = w.hidden ? 'none' : '';
       w.body.style.backgroundColor = node.o.bg || '';
-      const g = /^(\d+)x(\d+)(?:([+-]\d+)([+-]\d+))?/.exec(node.geom || '');
-      if (g) {
-        w.body.style.width = g[1] + 'px'; w.body.style.height = g[2] + 'px';
-        if (g[3] && w.geomPos !== node.geom) { w.el.style.left = Math.max(0, +g[3]) + 'px'; w.el.style.top = Math.max(0, +g[4]) + 'px'; w.geomPos = node.geom; }
-      } else { w.body.style.width = w.body.style.height = ''; }
-      w.body.style.resize = node.o.resizable && node.o.resizable[0] === false ? 'none' : g ? 'both' : 'none';
-      w.body.style.overflow = g && w.body.style.resize === 'both' ? 'auto' : 'hidden';
+      const g = /^(\d+)x(\d+)/.exec(node.geom || ''), size = g && g[0];
+      w.body.style.width = g ? g[1] + 'px' : ''; w.body.style.height = g ? g[2] + 'px' : ''; // (the size it asks for; .popped fills the window instead)
       w.menubar.replaceChildren();
       if (node.menu) w.menubar.append(menuEl(node.menu.items, true));
       w.menubar.style.display = node.menu ? '' : 'none';
-      w.ctx = { els: w.els, live: [] };
+      w.ctx = { els: w.els, live: [], ro: w.ro, relaid: false };
       renderChildren(w.body, node, w.ctx);
-      for (const id of [...w.els.keys()]) if (!w.ctx.live.includes(id)) { const el = w.els.get(id); el._dl?.remove(); w.els.delete(id); }
+      for (const id of [...w.els.keys()]) if (!w.ctx.live.includes(id)) { const el = w.els.get(id); el._dl?.remove(); w.ro.unobserve(el); w.els.delete(id); }
+      if (active && active !== doc.body && doc.contains(active) && doc.activeElement !== active) {
+        active.focus(); // moving elements around (layout rebuilds) can drop focus
+        if (caret) try { active.setSelectionRange(caret[0], caret[1]); } catch {}
+      }
+
+      if (w.hidden) { // withdraw(): no window (and no asking for one) until deiconify()
+        w.chip?.remove(); w.chip = null;
+        if (w.pop) { w.quiet = true; w.pop.close(); }
+      } else if (w.pop) {
+        // ponytail: resizing from code needs a recent click in Picture-in-Picture; without one it stays as it is and its content scrolls
+        try {
+          if (size && size !== w.size) w.pop.resizeTo(+g[1] + w.pop.outerWidth - w.pop.innerWidth, +g[2] + w.el.offsetHeight - w.body.offsetHeight + w.pop.outerHeight - w.pop.innerHeight);
+          else if (w.ctx.relaid) { // the program changed its layout: grow if it no longer fits, never shrink (the user may have made it bigger)
+            const dx = w.body.scrollWidth - w.body.clientWidth, dy = w.body.scrollHeight - w.body.clientHeight;
+            if (dx > 0 || dy > 0) w.pop.resizeBy(Math.max(0, dx), Math.max(0, dy));
+          }
+        } catch {}
+      } else if (!w.opening && !w.chip && !w.wait) popOpen(w);
+      w.size = size;
     }
 
     function dialog(d) {
-      const ov = mk('div', 'tkdialog ' + d.k, host()), box = mk('div', 'tkdbox', ov);
+      const pop = [...wins.values()].find(w => w.pop)?.pop; // in a window of the program, so it's seen; or in the page if none is open
+      doc = pop ? pop.document : document;
+      const ov = mk('div', 'tkdialog ' + d.k, pop ? doc.body : host()), box = mk('div', 'tkdbox', ov);
       mk('div', 'tkdtitle', box).textContent = d.title || ({ info: 'Information', warning: 'Warning', error: 'Error', question: 'Question' }[d.k] || 'Message');
       const body = mk('div', 'tkdmsg', box);
       mk('span', 'tkdicon ' + d.k, body).textContent = { info: 'i', warning: '!', error: '✕', question: '?', ask: '?' }[d.k] || 'i';
@@ -441,21 +518,18 @@
 
     function apply(tree) {
       if (!tree) return closeAll(); // null = the program ended or was replaced
-      const active = document.activeElement, caret = active && 'selectionStart' in active ? [active.selectionStart, active.selectionEnd] : null;
       wants = new Set(tree.wants);
       const keep = new Set();
-      tree.wins.forEach((n, i) => { keep.add(n.id); drawWin(n, i); });
+      tree.wins.forEach(n => { keep.add(n.id); drawWin(n); });
       for (const [id, w] of wins) if (!keep.has(id)) { dispose(w); wins.delete(id); }
-      (tree.dialogs || []).forEach(dialog);
+      // (a message box waits for a window that is opening, or it would land behind it)
+      if (tree.dialogs?.length) Promise.all([...wins.values()].map(w => w.opening)).then(() => tree.dialogs.forEach(dialog));
       if (tree.focus && tree.focus[1] !== focusN) { // focus_set()
-        focusN = tree.focus[1];
-        for (const w of wins.values()) { const e = w.els.get(tree.focus[0]); if (e) (e._in || e).focus(); }
-      } else if (active && active !== document.body && document.contains(active) && document.activeElement !== active) {
-        active.focus(); // moving elements around (layout rebuilds) can drop focus
-        if (caret) try { active.setSelectionRange(caret[0], caret[1]); } catch {}
+        focusN = tree.focus[1]; focusId = tree.focus[0];
+        wins.forEach(focusOn);
       }
     }
-    const dispose = w => { w.el.remove(); w.els.forEach(e => e._dl?.remove()); };
+    const dispose = w => { w.gone = true; w.ro.disconnect(); w.pop?.close(); w.el.remove(); w.chip?.remove(); w.els.forEach(e => e._dl?.remove()); };
     function closeAll() {
       for (const w of wins.values()) dispose(w);
       wins.clear();

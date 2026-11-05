@@ -107,7 +107,7 @@ def execute():
     g = json.loads(runner.run(json.dumps({"g.py": "n = 0\ndef f():\n    global n\n    n += 1\nf()\n"}), "g.py"))["files"]["g.py"]
     assert g["vals"]["4"] == {"n": "1"}, "global assigned inside a function"
 
-    for bad in ("import os\n", "x = __import__('os')\n"):
+    for bad in ("import socket\n", "x = __import__('socket')\n"):
         with contextlib.redirect_stderr(io.StringIO()) as e:
             runner.run(json.dumps({"a.py": bad}), "a.py")
         assert "isn't available" in e.getvalue(), e.getvalue()
@@ -128,11 +128,11 @@ def execute():
 
 def hints():
     """Beginner hints (unavailable import, shared default, unused or unassigned names, missing return, shadowed built-ins ...); a clean program has none."""
-    src = ("import os\nimport math\ndef f(a, items=[]):\n    unused = 1\n    return a\n    print('x')\n"
+    src = ("import socket\nimport math\ndef f(a, items=[]):\n    unused = 1\n    return a\n    print('x')\n"
            "def g():\n    pass\nx = g()\nlist = [1]\nx == 3\nprint(y)\ny = 2\nf\nfor i in range(3):\n    t = t + i\n")
     h = json.loads(runner.analyze(src))["hints"]
     by = {x["line"]: x["msg"] for x in h}
-    assert by[1].startswith("'os' isn't available") and 2 not in by
+    assert by[1].startswith("'socket' isn't available") and 2 not in by
     assert "shared by every call" in by[3]
     assert "never used" in by[4] and "can never run" in by[6]
     assert "no return statement" in by[9] and "built-in" in by[10] and "comparison" in by[11]
@@ -439,6 +439,51 @@ screen.listen()
 turtle.done()
 print("never")
 '''
+
+
+def resizing():
+    """The page reports real sizes: winfo_width() and geometry() use them, <Configure> fires when one changes (not when it stays),
+    and turtle keeps its origin, and what is drawn, in the middle of a canvas that changed size."""
+    POSTS.clear()
+    src = """import tkinter as tk
+root = tk.Tk()
+root.geometry("300x200")
+c = tk.Canvas(root, width=100, height=50)
+c.pack(fill="both", expand=True)
+c.bind("<Configure>", lambda e: print("cfg", e.width, e.height, e.widget is c, c.winfo_width(), root.geometry()))
+root.mainloop()
+"""
+    with contextlib.redirect_stdout(io.StringIO()):
+        json.loads(runner.run(json.dumps({"main.py": src}), "main.py"))
+    win = POSTS[-1]["wins"][0]
+    cv = next(n for n in _walk(win) if n["t"] == "canvas")
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        for _ in range(2):  # the second time nothing changed
+            runner.gui_event("tkinter", json.dumps({"t": "resize", "sizes": [[win["id"], 640, 480], [cv["id"], 620, 450]]}))
+    assert o.getvalue() == "cfg 620 450 True 620 640x480+0+0\n", o.getvalue()
+    assert "geom" in win and win["geom"] == "300x200"  # what the program asked for is still what the page is told
+
+    POSTS.clear()
+    src = """import turtle
+t = turtle.Turtle()
+t.dot(10, "red")
+s = turtle.Screen()
+s.onscreenclick(lambda x, y: print("at", x, y, s.window_width()))
+turtle.done()
+"""
+    with contextlib.redirect_stdout(io.StringIO()):
+        json.loads(runner.run(json.dumps({"t.py": src}), "t.py"))
+    canvas = lambda tree: next(n for n in _walk(tree["wins"][0]) if n["t"] == "canvas")
+    cv = canvas(POSTS[-1])
+    dot = lambda c: next(i for i in c["items"] if i["o"].get("fill") in ("#ff0000", "red"))
+    x0, y0 = dot(cv)["c"][:2]
+    assert cv["m"]["fill"] == "both" and cv["m"]["expand"] is True, cv["m"]
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        moved = json.loads(runner.gui_event("tkinter", json.dumps({"t": "resize", "sizes": [[cv["id"], 920, 640]]})))
+        runner.gui_event("tkinter", json.dumps({"t": "ev", "k": "press", "id": cv["id"], "x": 560, "y": 270, "num": 1}))
+    x1, y1 = dot(canvas(moved["tree"]))["c"][:2]
+    assert (x1 - x0, y1 - y0) == (100, 50), (x0, y0, x1, y1)  # 720x540 -> 920x640: half the difference
+    assert o.getvalue() == "at 100.0 50.0 920\n", o.getvalue()
 
 
 def turtle_lib():
@@ -812,6 +857,89 @@ def changing_is_not_binding():
     assert (1, 3, "lst") in wires and [n["show"] for n in g["nodes"] if n["line"] == 3] == [["lst"]], (wires, g["nodes"])  # (from ... import: an object, not a module)
 
 
+REDACT = '''import os
+old_pathname = input("Path to file: ")
+old_word = input("Word to redact: ").lower()
+word_length = len(old_word)
+path, old_filename = os.path.split(old_pathname)
+new_filename = "REDACTED-" + old_filename
+new_pathname = os.path.join(path, new_filename)
+new_word = "X" * len(old_word)
+
+with open(old_pathname, encoding="utf8") as old_file, \\
+    open(new_pathname, "w", encoding="utf8") as new_file:
+    for line in old_file:
+        while old_word in line.lower():
+            position = line.lower().index(old_word)
+            line = line[:position] + new_word + line[position+word_length:]
+        new_file.write(line)
+
+print(f'{new_pathname} shows "{new_word}" instead of every occurrence of "{old_word}".')
+'''
+
+
+def folders_and_os():
+    """Files in folders, the os module, and what a program does to the project's folder coming back to the page (`disk`)."""
+    def go(files, main="main.py", answers="[]", mode="run", locked="[]"):
+        with contextlib.redirect_stdout(io.StringIO()) as o, contextlib.redirect_stderr(io.StringIO()) as e:
+            r = json.loads(runner.run(json.dumps(files), main, mode, answers, 0, "", locked))
+        return r, (o.getvalue() + e.getvalue()).replace("\\", "/")  # (os.path uses / in the browser, and \\ if these tests run on Windows)
+
+    # the program this was made for: a file in another folder, redacted to a new file next to it
+    r, out = go({"main.py": REDACT, "docs/letter.txt": "The Secret is out.\nno SECRETS here\n"}, answers='["docs/letter.txt", "secret"]')
+    assert r["error"] is None and 'docs/REDACTED-letter.txt shows "XXXXXX" instead of every occurrence of "secret".' in out, (out, r["error"])
+    assert list(r["disk"]["written"]) == ["docs/REDACTED-letter.txt"] and not r["disk"]["deleted"] and not r["disk"]["skipped"], r["disk"]
+    assert r["disk"]["written"]["docs/REDACTED-letter.txt"].replace("\r\n", "\n") == "The XXXXXX is out.\nno XXXXXXS here\n", r["disk"]
+
+    # os on the project's folder: a program sees the files and folders, and changes come back. The temp folder's own name never shows.
+    prog = ("import os\nprint(os.getcwd())\nprint(sorted(os.listdir()), sorted(os.listdir('data')))\nprint(os.path.exists('data/a.txt'), os.path.isdir('data'), os.path.isfile('nope'))\n"
+            "print(os.path.join('x', 'y.txt'), os.path.splitext('y.txt'), os.path.basename('data/a.txt'))\n"
+            "for here, dirs, names in os.walk('.'):\n    print(here, sorted(dirs), sorted(names))\n"
+            "os.makedirs('out/deep')\nos.mkdir('blank')\nwith open('out/deep/r.txt', 'w') as f:\n    f.write('made')\nos.remove('data/b.txt')\nos.rename('data/a.txt', 'data/c.txt')\n"
+            "with open('pic.bin', 'wb') as f:\n    f.write(bytes([255, 254, 0]))\nprint(sorted(os.listdir('data')))\n")
+    r, out = go({"main.py": prog, "data/a.txt": "A", "data/b.txt": "B", "empty/": ""})
+    assert r["error"] is None, (out, r["error"])
+    lines = out.splitlines()
+    assert lines[0] == "." and lines[1] == "['data', 'empty', 'main.py'] ['a.txt', 'b.txt']" and lines[2] == "True True False", lines
+    assert lines[3] == "x/y.txt ('y', '.txt') a.txt" and lines[4] == ". ['data', 'empty'] ['main.py']" and "./data [] ['a.txt', 'b.txt']" in lines, lines
+    assert lines[-1] == "['c.txt']", lines
+    assert r["disk"]["written"] == {"out/deep/r.txt": "made", "blank/": "", "data/c.txt": "A"} and r["disk"]["deleted"] == ["data/a.txt", "data/b.txt"], r["disk"]
+    assert r["disk"]["skipped"] == ["pic.bin"], r["disk"]
+    r, out = go({"main.py": "x = 1\n", "notes.txt": "n"})
+    assert r["disk"] is None and r["error"] is None, "a program that writes nothing changes nothing"
+    r, out = go({"main.py": "input('? ')\nopen('later.txt', 'w').write('x')\n"})
+    assert r["need_input"] and r["disk"] is None, "only a finished run counts (the re-run fallback runs again from the top)"
+    r, out = go({"main.py": "with open('w.txt', 'w', newline='') as f:\n    f.write(open('crlf.txt', newline='').read())\n", "crlf.txt": "a\r\nb\r\n"})
+    assert r["disk"]["written"] == {"w.txt": "a\r\nb\r\n"}, r["disk"]  # (a file with Windows line endings isn't "changed" by being written out)
+
+    # the >>> prompt writes files too, and only what it changed comes back
+    with contextlib.redirect_stdout(io.StringIO()):
+        runner.run(json.dumps({"main.py": "a = 1\n", "d/x.txt": "x"}), "main.py")
+        s = json.loads(runner.shell("open('d/y.txt', 'w').write('y')"))
+        s2 = json.loads(runner.shell("a + 1"))
+    assert s["disk"]["written"] == {"d/y.txt": "y"} and s2["disk"] is None, (s, s2)
+
+    # modules in folders: import pkg.util, from a folder's sibling, a run file in a folder, a locked module in a folder
+    files = {"main.py": "import pkg.util\nfrom pkg.deep.more import two\nprint(pkg.util.one() + two())\n", "pkg/util.py": "from pkg.deep.more import two\ndef one():\n    return two() - 1\n",
+             "pkg/deep/more.py": "def two():\n    return 2\n"}
+    r, out = go(files)
+    assert out == "3\n" and r["error"] is None and set(r["files"]) == set(files), (out, r["error"])
+    assert any(k for k in r["files"]["pkg/util.py"]["hits"]), "a module in a folder is traced"
+    r, out = go({"scripts/run.py": "import helper\nprint(helper.N, __file__.replace(chr(92), '/').endswith('scripts/run.py'))\nprint(open('top.txt').read())\n", "scripts/helper.py": "N = 5\n", "top.txt": "root"}, "scripts/run.py")
+    assert out == "5 True\nroot\n", (out, r["error"])  # next to the file: importable; the working folder is the project's
+    r, out = go({"main.py": "import pkg.util\npkg.util.boom()\n", "pkg/util.py": "def boom():\n    raise ValueError('x')\n"})
+    assert r["error"]["file"] == "pkg/util.py" and r["error"]["line"] == 2 and 'File "pkg/util.py", line 2' in out, (r["error"], out)
+    r, out = go({"main.py": "import tests.secret\nprint(tests.secret.V)\nimport os\nprint(os.path.exists('tests/secret.py'))\n", "tests/secret.py": "V = 7  # SECRET\n"}, locked='["tests/secret.py"]')
+    assert out == "7\nFalse\n" and "tests/secret.py" not in r["files"], (out, r["error"])  # locked: in memory only
+    r, out = go({"main.py": "import pkg.nope\n", "pkg/util.py": "x = 1\n"})
+    assert "ModuleNotFoundError" in out, out
+    # grading files in folders
+    with contextlib.redirect_stdout(io.StringIO()) as o:
+        runner.run(json.dumps({"src/calc.py": "def f():\n    return 1\n", "tests/t.py": "import unittest\nfrom src.calc import f\nclass T(unittest.TestCase):\n    def test_f(self):\n        self.assertEqual(f(), 1)\n",
+                               "tests/d.txt": ">>> f()\n1\n"}), "src/calc.py", "grade", "[]", 0, "", "[]", json.dumps({"grades": [["src/calc.py", "tests/t.py"], ["src/calc.py", "tests/d.txt"]]}))
+    assert "Overall: 100% (the average of 2 grades)" in o.getvalue(), o.getvalue()
+
+
 def input_in_bare_except():
     """With no mailbox, input() falls back to "re-run with the answers so far". A bare `except:` around it must not swallow that."""
     loop = 'while True:\n  try:\n    int(input("number: "))\n  except:\n    break\nprint("done")\n'
@@ -839,7 +967,7 @@ def console_shell():
     r, o, e = sh("1 / 0")
     assert "ZeroDivisionError: division by zero" in e and "runner" not in e and 'File "<console>", line 1' in e, e
     assert "SyntaxError" in sh("x y")[2]
-    assert "isn't available here" in sh("import os")[2], "the import allow-list applies at the prompt too"
+    assert "isn't available here" in sh("import socket")[2], "the import allow-list applies at the prompt too"
     assert r["files"]["main.py"]["calls"], "calls from the prompt are traced like the program's own"
     runner.shell_cleanup()  # no run yet (a fresh page): the project's files can still be imported
     r, o, e = sh("import helpers; helpers.two() * 21", json.dumps({"helpers.py": "def two():\n    return 2\n"}))
@@ -915,6 +1043,7 @@ if __name__ == "__main__":
     tkinter_classes()
     tkinter_star_import()
     turtle_lib()
+    resizing()
     example_library()
     pathlib_and_teleport()
     window_events()
@@ -925,6 +1054,7 @@ if __name__ == "__main__":
     big_output()
     stdin_and_builtins()
     changing_is_not_binding()
+    folders_and_os()
     input_in_bare_except()
     console_shell()
     grade_mode()

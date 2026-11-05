@@ -6,6 +6,48 @@ const fetchText = async url => {
   return r.text();
 };
 
+// A real browser window for a panel or a program's GUI. Where the browser has Document Picture-in-Picture (Chrome, Edge) the first one floats
+// above every other window, like a video. A page can have only one of those (asking again would close it), and Firefox has none, so the
+// others are ordinary popups. Either needs a recent click, or open() gives null.
+const PopOut = (() => {
+  const wins = new Set();
+  let serial = 0;
+  const theme = w => { // follows the page's theme and font size
+    w.document.body.className = document.body.className + ' pip';
+    w.document.body.style.cssText = document.body.style.cssText;
+  };
+  const pipFree = () => !!window.documentPictureInPicture && !documentPictureInPicture.window && !!navigator.userActivation?.isActive;
+  addEventListener('pagehide', () => wins.forEach(w => w.close()));
+  return {
+    pipFree,
+    isPip: w => w === window.documentPictureInPicture?.window,
+    /** the new window (width x height inside), styled like the page, or null. onclose runs when it goes, whoever closes it. */
+    async open(title, width, height, onclose) {
+      if (navigator.userActivation && !navigator.userActivation.isActive) return null; // (no click: don't set off the browser's popup warning)
+      let w = null;
+      if (pipFree()) try { w = await documentPictureInPicture.requestWindow({ width, height }); } catch {} // (refused: try a popup)
+      w ||= window.open('', 'pynodemap-' + ++serial, `popup,width=${width},height=${height}`);
+      if (!w) return null;
+      const d = w.document;
+      d.title = title;
+      document.querySelectorAll('link[rel="stylesheet"], style').forEach(n => {
+        const c = n.cloneNode(true);
+        if (n.href) c.href = n.href; // (absolute: the new document has no address of its own to resolve it against)
+        d.head.append(c);
+      });
+      theme(w);
+      wins.add(w);
+      w.addEventListener('pagehide', () => { wins.delete(w); onclose(); });
+      return w;
+    },
+    find(sel) {
+      for (const w of wins) { const e = w.document.querySelector(sel); if (e) return e; }
+      return null;
+    },
+    sync: () => wins.forEach(theme),
+  };
+})();
+
 const PyLibs = (() => {
   const libs = [];
   const words = s => (s || '').split(/\s+/).filter(Boolean);

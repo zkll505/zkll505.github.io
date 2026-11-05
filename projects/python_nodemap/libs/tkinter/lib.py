@@ -319,6 +319,8 @@ def _seq_match(seq, e):
             if m in mods and not e.get("btn", 0) & bit:
                 return False
         return True
+    if typ == "Configure":
+        return k == "configure"
     if typ in ("Enter", "Leave"):
         return k == typ.lower()
     if typ == "MouseWheel":
@@ -339,7 +341,7 @@ def _category(seq):
     if typ in ("Button", "ButtonPress"):
         return "double" if "Double" in mods else "press"
     return {"ButtonRelease": "release", "Motion": "motion", "Enter": "enter", "Leave": "leave", "MouseWheel": "wheel",
-            "KeyRelease": "keyup"}.get(typ, "key")
+            "KeyRelease": "keyup", "Configure": None}.get(typ, "key")  # (the page always reports sizes)
 
 
 def _window(w):
@@ -378,7 +380,8 @@ def _fire(w, e):
     A callback that returns "break" stops the search."""
     ev = Event(widget=w, x=int(e.get("x", 0)), y=int(e.get("y", 0)), x_root=int(e.get("rx", 0)), y_root=int(e.get("ry", 0)),
                num=int(e.get("num", 0)), delta=int(e.get("delta", 0)), char=e.get("char", ""), keysym=e.get("keysym", ""),
-               keycode=int(e.get("code", 0)), type={"press": "4", "release": "5", "key": "2", "keyup": "3", "motion": "6"}.get(e["k"], "0"))
+               keycode=int(e.get("code", 0)), width=int(e.get("w", 0)), height=int(e.get("h", 0)),
+               type={"press": "4", "release": "5", "key": "2", "keyup": "3", "motion": "6", "configure": "22"}.get(e["k"], "0"))
     for tag in _tags(w):
         for seq, funcs in list(tag._binds.items()):
             if _seq_match(seq, e):
@@ -413,6 +416,7 @@ class Misc:
     _kind = "widget"
     _container = False
     _hidden = False  # not laid out by a geometry manager (windows, menus)
+    _real = None  # (width, height) as the page measured it (see dispatch)
 
     def __init__(self, master=None, cnf=None, **kw):
         if master is None and not isinstance(self, (Tk, Menu)) and not _ST["roots"]:
@@ -728,16 +732,16 @@ class Misc:
                 _ST["after"].clear()
         _dirty()
 
-    # --- information (sizes are approximate: the real layout happens in the browser, so winfo_width() etc. are estimates)
+    # --- information (the real layout happens in the browser, so winfo_width() etc. are what was asked for until the page has measured it)
     def _gsize(self):
         m = re.match(r"(\d+)x(\d+)", str(getattr(self, "_geom", "")))
         return (int(m.group(1)), int(m.group(2))) if m else (None, None)
 
-    def winfo_width(self):
-        return int(self._gsize()[0] or _num(self._o.get("width"), 200))
+    def winfo_width(self):  # the size the page measured (see dispatch); until it has, what was asked for
+        return self._real[0] if self._real else int(self._gsize()[0] or _num(self._o.get("width"), 200))
 
     def winfo_height(self):
-        return int(self._gsize()[1] or _num(self._o.get("height"), 100))
+        return self._real[1] if self._real else int(self._gsize()[1] or _num(self._o.get("height"), 100))
 
     winfo_reqwidth, winfo_reqheight = winfo_width, winfo_height
 
@@ -810,8 +814,9 @@ class _Window(Misc):
 
     def geometry(self, newGeometry=None):
         if newGeometry is None:
-            return self._geom or "%dx%d+0+0" % (self.winfo_width(), self.winfo_height())
+            return "%dx%d+0+0" % (self.winfo_width(), self.winfo_height())
         self._geom = str(newGeometry)
+        self._real = None
         _dirty()
 
     wm_geometry = geometry
@@ -1665,8 +1670,16 @@ def _menu_click(path):  # path = "<menu id>:<entry index>"
 
 def dispatch(ev):
     """Hook: the page reports something the user did. ev["t"] says what: menu (a menu entry), close (the window's x button, honours
-    protocol("WM_DELETE_WINDOW")), click (button), value (typing / choosing), check, radio, sel (listbox), ev (mouse / key events)."""
+    protocol("WM_DELETE_WINDOW")), click (button), value (typing / choosing), check, radio, sel (listbox), ev (mouse / key events),
+    resize (the real sizes of widgets that changed, as [id, width, height])."""
     t = ev.get("t")
+    if t == "resize":
+        for wid, width, height in ev.get("sizes", []):
+            w = _REG.get(wid)
+            if w is not None and w._alive and w._real != (width, height):
+                w._real = (width, height)
+                _fire(w, {"k": "configure", "w": width, "h": height})
+        return
     w = _REG.get(ev.get("id"))
     if t == "menu":
         return _menu_click(ev.get("m"))

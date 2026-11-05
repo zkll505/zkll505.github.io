@@ -49,7 +49,7 @@
             <button id="share" title="Copy a link that contains your files" aria-live="polite">
                 Share
             </button>
-            <button id="imp" title="Import .py / .txt files or a .zip of them">
+            <button id="imp" title="Import .py or text files, or a .zip of them (its folders are kept)">
                 Import
             </button>
             <button
@@ -66,14 +66,15 @@
                 title="Tell us what works and what doesn't (opens a form in a new tab)"
                 >Feedback</a
             >
-            <input id="pick" type="file" accept=".zip,.py,.txt" multiple hidden />
+            <input id="pick" type="file" accept=".zip,.py,.txt,.csv,.tsv,.md,.json,.log,.dat,.ini,.xml" multiple hidden />
         </header>
 
         <!-- explorer | editor | node map -->
         <div id="work">
             <aside id="side">
                 <div class="h">
-                    EXPLORER <button id="new" title="New file">+</button>
+                    EXPLORER
+                    <span><button id="new-dir" title="New folder">📁</button><button id="new" title="New file (put a folder in front to make it there: data/notes.txt)">+</button></span>
                 </div>
                 <ul id="files"></ul>
             </aside>
@@ -188,11 +189,11 @@
             </section>
         </div>
 
-        <!-- the floating windows opened by GUI libraries (tkinter, turtle) are drawn here -->
+        <!-- GUI libraries (tkinter, turtle) lay their windows out here, unseen, before they move into real windows; also "Open window" prompts -->
         <div id="tkhost"></div>
         <div id="hsplit" class="split"></div>
         <section id="con">
-            <div class="h">CONSOLE <button id="clear">Clear</button></div>
+            <div class="h">CONSOLE <span><button id="con-pop">⧉</button> <button id="clear">Clear</button></span></div>
             <!-- the output, and at its end the line you type on: an answer to input(), or Python at the >>> prompt (#line's data-p) -->
             <pre id="out"><span id="line" hidden><input id="in" autocomplete="off" spellcheck="false" aria-label="Console input" /></span></pre>
         </section>

@@ -16,16 +16,17 @@ name. How to write one, field by field: [../docs/ADDING_A_LIBRARY.md](../docs/AD
 
 | Folder | Importable as | Has `lib.py` | What it adds |
 | --- | --- | --- | --- |
-| `stdlib/` | `random`, `math`, `time`, `enum`, `pathlib`, `typing`, `sys`, `io`, `builtins`, `contextlib`, `collections`, `copy`, `re`, `itertools`, `functools`, `string` | no | Nothing but permission to import them (they are already in Python) and autocomplete lists. `pathlib` works on the run's temporary working folder, which is deleted when the run ends. |
+| `stdlib/` | `random`, `math`, `time`, `enum`, `pathlib`, `os`, `typing`, `sys`, `io`, `builtins`, `contextlib`, `collections`, `copy`, `re`, `itertools`, `functools`, `string` | no | Nothing but permission to import them (they are already in Python) and autocomplete lists. `pathlib` works on the run's temporary working folder, which is deleted when the run ends. |
 | `doctest/` | `doctest` | yes | The **Doctest** button: imports the active file and runs its `>>>` examples. |
 | `unittest/` | `unittest` | yes | The **Tests** button (it also runs the tests in locked files), and the report goes to stdout instead of red stderr. |
-| `tkinter/` | `tkinter`, `tkinter.ttk`, `.messagebox`, `.simpledialog`, `.font`, `.constants` | yes | A look-alike of tkinter (widgets, geometry managers, events, timers, canvas, menus) and the renderer that draws it as floating windows. The largest library by far. |
+| `tkinter/` | `tkinter`, `tkinter.ttk`, `.messagebox`, `.simpledialog`, `.font`, `.constants` | yes | A look-alike of tkinter (widgets, geometry managers, events, timers, canvas, menus) and the renderer that draws it in real browser windows. The largest library by far. |
 | `turtle/` | `turtle` | yes | The turtle module, drawn on tkinter's canvas (so it needs no renderer of its own). |
 
 ## tkinter: what works and what doesn't
 
 Widgets are plain Python objects that remember their options; `lib.js` draws them. Nothing here is real Tk, so anything that
-depends on exact pixel metrics is approximate (`winfo_width()` and font measurements are estimates).
+depends on exact pixel metrics is approximate (font measurements are estimates). `winfo_width()`, `winfo_height()` and `geometry()` give the real
+size once the window is on screen, and `<Configure>` fires when a size changes; before that they give what was asked for.
 
 - **Works:** `Tk`, `Toplevel`, `Frame`, `LabelFrame`, `Label`, `Message`, `Button`, `Entry`, `Text` (plain text), `Checkbutton`,
   `Radiobutton`, `Scale`, `Spinbox`, `Listbox`, `Canvas` (line, rectangle, oval, polygon, arc, text; tags; `tag_bind`;
@@ -36,6 +37,9 @@ depends on exact pixel metrics is approximate (`winfo_width()` and font measurem
 - **Events while the script runs:** key presses, clicks and the window's ✕ reach a program that is busy in a loop, as long as the loop
   calls `update()` (see the mailbox in [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)). Closing the window mid-run raises `TclError` at the
   next `update()`, as in Tk.
+- **Resizing:** drag the window's edge, or call `geometry()`. What was packed with `fill` and `expand` follows, in both directions; a grid's
+  weighted rows and columns grow but don't get smaller than their widgets asked for; whatever no longer fits scrolls. `turtle` keeps its origin, and
+  what is already drawn, in the middle.
 - **Different on purpose:** dialogs cannot wait for a click, so they answer at once (`askyesno` says yes, `askstring` says
   `None`) and print a note. A window stays open after the script ends; `mainloop()` ends the script.
 - **Not supported:** images (`PhotoImage` raises a clear error), file dialogs, `Text` tags, real scrollbars (widgets scroll by

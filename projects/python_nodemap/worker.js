@@ -1,7 +1,7 @@
 /* Runs Pyodide in a Web Worker so the page never freezes and Stop can kill a run.
    app.js turns this function's source into a Blob worker, so it can't use outside variables.
    Messages in:  init {url, runner, libs, allowed, sizes} | analyze | run {..., mailbox, locked, opts} | shell {src, files, locked, mailbox}
-                 | guievent {lib, ev} | guireset
+                 | guievent {lib, ev} | guireset | guidrain
    (mailbox = the URL of the service worker's mailbox, or '': how the running program reads window events; see runner.mailbox)
    Messages out: out {cls, text} | progress | gui {lib, tree} (tree null = close the windows) | trace {files}
                  | input (the program is waiting in input(); runner.ask) | {id, result|error} */
@@ -44,6 +44,7 @@ function workerMain() {
         if (api) { api.gui_stop(); closeWindows(); }
         return;
       }
+      if (m.type === 'guidrain') { if (api) libs().forEach(lib => guiReply(api.gui_pump(lib))); return; } // (see afterPython in app.js)
       let result;
       if (m.type === 'init') {
         importScripts(m.url + 'pyodide.js'); // classic worker: Pyodide 314+ only supports module workers, which Chrome blocks on file://

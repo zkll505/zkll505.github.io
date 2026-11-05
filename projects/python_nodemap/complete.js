@@ -11,7 +11,7 @@ const PyComplete = (() => {
   function hint(cm, files) {
     const cur = cm.getCursor(), line = cm.getLine(cur.line).slice(0, cur.ch);
     const MOD = PyLibs.members(), importable = PyLibs.names();
-    const proj = Object.fromEntries(Object.entries(files).map(([n, s]) => [n.replace(/\.py$/, ''), s]));
+    const proj = Object.fromEntries(Object.entries(files).map(([n, s]) => [n.replace(/\.py$/, '').replace(/\//g, '.'), s]));
     const alias = {};
     for (const a of cm.getValue().matchAll(/^\s*(?:import\s+([\w.]+)\s+as\s+(\w+)|from\s+(\w+)\s+import\s+(\w+)\s+as\s+(\w+))/gm)) {
       if (a[1]) alias[a[2]] = a[1].split('.').pop(); // import tkinter as tk
@@ -21,9 +21,9 @@ const PyComplete = (() => {
     const members = m => MOD[alias[m] || m] || (proj[m] ? top(proj[m]) : null);
     // what stands before the cursor decides the list: `from x import |`, `import |`, `x.|`, or a plain word. The first match wins.
     let m, prefix, list;
-    if ((m = /^\s*from\s+(\w+)\s+import\s+(?:\w+\s*,\s*)*(\w*)$/.exec(line))) { prefix = m[2]; list = members(m[1]) || []; }
-    else if ((m = /^\s*(?:from|import)\s+(\w*)$/.exec(line))) { prefix = m[1]; list = [...importable, ...Object.keys(proj)]; }
-    else if ((m = /([A-Za-z_]\w*)\.(\w*)$/.exec(line))) { prefix = m[2]; list = members(m[1]) || [...Object.values(proj).flatMap(methodsOf), ...METHODS, ...PyLibs.methods()]; }
+    if ((m = /^\s*from\s+([\w.]+)\s+import\s+(?:\w+\s*,\s*)*(\w*)$/.exec(line))) { prefix = m[2]; list = members(m[1]) || []; }
+    else if ((m = /^\s*(?:from|import)\s+([\w.]*)$/.exec(line))) { prefix = m[1]; list = [...importable, ...Object.keys(proj)]; }
+    else if ((m = /([A-Za-z_][\w.]*)\.(\w*)$/.exec(line))) { prefix = m[2]; list = members(m[1]) || [...Object.values(proj).flatMap(methodsOf), ...METHODS, ...PyLibs.methods()]; }
     else if ((m = /[A-Za-z_]\w*$/.exec(line))) {
       prefix = m[0];
       list = [...KW, ...BUILTIN, ...importable, ...Object.keys(alias), ...(cm.getValue().match(/[A-Za-z_]\w*/g) || []), ...Object.values(proj).flatMap(top)];

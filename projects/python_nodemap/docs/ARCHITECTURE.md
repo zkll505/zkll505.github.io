@@ -26,7 +26,7 @@ seconds; the downloaded files are cached).
 
 | File | Role |
 | --- | --- |
-| `index.html`, `style.css` | Page shell, themes (CSS variables), VS Code look, the floating tkinter windows' look. |
+| `index.html`, `style.css` | Page shell, themes (CSS variables), VS Code look, the look of tkinter's widgets. |
 | `app.js` | Everything about the IDE: state, files/tabs, editor (CodeMirror), console, run/stop/`input()`, stepping, node-map interactions, preferences, import/export/share. Globals such as `S` (state) and `W` (worker client) are handy in the browser console. |
 | `nodemap.js` | `NodeMap.build(graph, trace, opts)` → SVG string (layout, wire routing, themes, folding); `NodeMap.png()`; `NodeMap.viewAt()` (rebuilds values at step *n*). |
 | `libs.js` | `PyLibs`: the registry every library registers with. |
@@ -66,6 +66,7 @@ are pushed by the worker whenever it likes.
 | page → worker | `shell {src, files, locked, mailbox}` | A line typed at the console's `>>>` prompt (`runner.shell`). Reply `{id, result}`: `{more, files}`. |
 | page → worker | `guievent {lib, ev}` | The user did something in a library's window (no reply of its own; frames come back as `gui`). |
 | page → worker | `guireset` | The project was replaced: stop the windows and their timers. |
+| page → worker | `guidrain` | A run just ended: read the mailbox once more, for events sent after Python's last read. |
 | worker → page | `{id, result}` or `{id, error}` | The reply to a request. |
 | worker → page | `out {cls, text}` | Console output, batched (`cls` is `''` for stdout, `'err'` for stderr). |
 | worker → page | `progress {loaded, total}` | Bytes of Pyodide downloaded so far, for the loading bar. |
@@ -152,6 +153,29 @@ and a *view* (in its `lib.js`). The flow:
 
 `turtle` has no view at all: it draws on a tkinter `Canvas`, so it only needed `lib.py`.
 
+### Real windows
+
+`PopOut` (`libs.js`) opens a real window for the node map, the console or a program's window, and `$` also looks in those. It takes Document
+Picture-in-Picture if the browser has it and no one holds it (asking for a second would close the first), otherwise a popup, and returns
+null without a recent click rather than set off the browser's popup warning. So the view can't assume it gets a window:
+
+1. `drawWin` first lays the window out in `#tkhost`, unseen and as wide as its content. That is the size the program asks for, so no one has
+   to compute it.
+2. `popOpen` opens a window of that size and moves the elements there (`.popped`: they fill it). New elements are made in that document (`doc`).
+   If no window came, the program still runs and a prompt in `#tkhost` opens it on a click.
+3. Closing the window sends `{t: 'close'}`, unless we closed it (`w.quiet`: `withdraw()`; `w.gone`: the window is finished in Python). A
+   `WM_DELETE_WINDOW` handler may keep the window, so after a moment it comes back as a prompt.
+
+**Sizes.** One `ResizeObserver` per window (`watch`) sees the body and every widget, redraws canvases, and sends `{t: 'resize', sizes}`, so
+`dispatch` can update `winfo_width()` and fire `<Configure>`. The observer, and `requestAnimationFrame` for mouse moves, must come from the window
+that holds the elements: the page's own stop when its tab is hidden or covered, which is when a floating window is in use. `watch` makes a new
+observer after each move.
+
+**Shrinking.** A `Canvas` asks for its size with `min-width`/`min-height`, as it has to for `fill`'s stretch to work. In a real window, what
+fills or expands drops that minimum (`packSlave`: `.gw`, `.gh`, `.gs`), so it follows the window both ways. Anything else keeps its size and `.tkbody`
+scrolls. `turtle` packs its canvas with `fill` and `expand`, and on `<Configure>` moves what is drawn by half the change (`_recentre`) to keep
+the origin in the middle, so clicks and `window_width()` need nothing special.
+
 The tkinter view (`libs/tkinter/lib.js`) is the biggest piece of front-end code: `pack` is rendered as nested flex boxes (the
 first slave takes a band of the cavity, the rest share what is left), `grid` as CSS grid, `place` as absolutely positioned
 boxes. Widget DOM elements are reused between updates, and `Entry`/`Text` values are only written when Python changed them
@@ -212,6 +236,26 @@ library runs `testfile` on `mod.__file__`.
 (`setSgr`; 16 colours, no 256-colour or true colour) and `\x1b[2J` empties the console, so a game that clears the screen before it
 redraws shows one board. Other codes are dropped. The style in force (`sgr`) carries over between pieces of output, and a re-run after
 `input()` only receives the output that is new, so a clear in the part already shown is not repeated.
+
+## Folders and the project's disk
+
+A project is still a flat `{name: text}`, but names can hold folders (`pkg/util.py`), and a folder with nothing in it is an entry whose name
+ends in `/` with empty text (`isDir`), so empty folders are saved and shared with no extra state. `okName` is what may be in a project at
+all (share links are checked against it, and names go into the page's HTML); `askName` is stricter for what you type. The explorer
+builds its tree from the names on each `chrome()`.
+
+`run()` writes every file into its temp folder, the working directory, and adds the folder of the file being run to `sys.path`, as
+Python does. `pkg/util.py` is the module `pkg.util`; the import guard allows the top-level name (`mods`) and removes all of them between
+runs (`loaded`). A locked module in a folder is served from memory under its dotted name.
+
+`disk_snapshot()` reads the folder before the program starts and `disk_changes()` compares it when it ends, so what a program writes,
+changes or deletes comes back as `disk` in the result, and `applyDisk()` puts it in the project (never over a protected file).
+The snapshot stays in `_SHELL` and is updated each time, so a line at the `>>>` prompt reports only what that line did, and an edit in the
+page is never overwritten by an unchanged file on disk. A run stopped by the re-run fallback for `input()` reports nothing: it starts over.
+
+The import guard looks at who is importing. `__import__('socket')` from a student's code has no `globals` argument, so it uses the calling
+frame; Python's own code importing things the same way is left alone (`open(..., encoding="utf8")` makes the `encodings` package import
+its codec like that, and blocking it made that an `unknown encoding` error).
 
 ## Coverage
 

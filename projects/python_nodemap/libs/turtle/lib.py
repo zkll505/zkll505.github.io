@@ -94,13 +94,21 @@ class _Screen:
         self._root.title("Python Turtle Graphics")
         self._w, self._h = 720, 540
         self._cv = tk.Canvas(self._root, width=self._w, height=self._h, bg="white", highlightthickness=0)
-        self._cv.pack()
+        self._cv.pack(fill="both", expand=True)  # (the window can be resized: _recentre keeps the drawing in the middle)
+        self._cv.bind("<Configure>", lambda e: self._recentre(e.width, e.height))
         self._root.protocol("WM_DELETE_WINDOW", self.bye)
         self._bg, self._tracing, self._delayv, self._count, self._mode, self._turtles = "white", 1, 10, 0, 1.0, []
 
     def _pt(self, x, y):
         """Turtle coordinates (origin in the middle, y up) -> canvas pixels (origin top-left, y down)."""
         return self._w / 2 + x, self._h / 2 - y
+
+    def _recentre(self, w, h):
+        """The canvas is now w x h: the origin stays in the middle, so what is already drawn moves with it."""
+        dx, dy = (w - self._w) / 2, (h - self._h) / 2
+        self._w, self._h = w, h
+        if dx or dy:
+            self._cv.move("all", dx, dy)
 
     def bgcolor(self, *args):
         if not args:
@@ -112,9 +120,10 @@ class _Screen:
         self._root.title(t)
 
     def setup(self, width=0.5, height=0.75, startx=None, starty=None):  # fractions of a 1280x720 screen, or pixels
-        self._w = int(1280 * width) if width <= 1 else int(width)
-        self._h = int(720 * height) if height <= 1 else int(height)
-        self._cv.config(width=self._w, height=self._h)
+        w, h = int(1280 * width) if width <= 1 else int(width), int(720 * height) if height <= 1 else int(height)
+        self._recentre(w, h)
+        self._cv.config(width=w, height=h)
+        self._root.geometry("%dx%d" % (w, h))
 
     def screensize(self, canvwidth=None, canvheight=None, bg=None):
         if canvwidth is None and canvheight is None and bg is None:

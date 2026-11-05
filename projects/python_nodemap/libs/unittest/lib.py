@@ -61,11 +61,11 @@ def _grade_one(mod, student, target):
     verbose, quiet = _option("verbose", False), io.StringIO()
     rows, failed = [], []  # rows = (group, weight, passed, total); failed = (name, description, details)
     try:
-        code = importlib.import_module(student[:-3]) if student else mod
+        code = importlib.import_module(student[:-3].replace("/", ".")) if student else mod
     except BaseException as e:
         print(f"Grade: 0% ({student} couldn't be run: {type(e).__name__}: {e})")
         return 0
-    if target.endswith(".txt"):
+    if not target.endswith(".py"):
         import doctest
         with contextlib.redirect_stdout(quiet):
             r = doctest.testfile(target, module_relative=False, report=False, globs=dict(vars(code)))
@@ -77,7 +77,7 @@ def _grade_one(mod, student, target):
                 failed.append((f"{target}, line {m.group(1)}", "", block.strip().split("\n", 1)[1] if verbose else ""))
     else:
         try:
-            tests = importlib.import_module(target[:-3])
+            tests = importlib.import_module(target[:-3].replace("/", "."))
         except BaseException as e:
             print(f"Grade: the tests in {target} couldn't be loaded ({type(e).__name__}: {e})")
             return 0

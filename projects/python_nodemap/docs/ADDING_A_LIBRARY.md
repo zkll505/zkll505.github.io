@@ -175,6 +175,11 @@ Things to get right (each was a real bug):
 - A frame can arrive *after* the page told you to close. Make `apply(tree)` idempotent.
 - Don't write a value into an input the user is editing unless Python changed it.
 
+The example draws a box in the page, which is enough for a small library. For a real window use
+`PopOut.open(title, width, height, onclose)` (`libs.js`) and move your elements into `w.document.body`. It returns null if the browser
+gave no window, so have a way to ask for one on a click. A `ResizeObserver` or `requestAnimationFrame` must be that window's own (`w.ResizeObserver`):
+the page's stop while its tab is hidden. See [Real windows](ARCHITECTURE.md#real-windows).
+
 ## 5. Testing your library
 
 1. **Python** (no browser): `tests/test_backend.py` loads `runner.py` and the libraries the way the page does. Add a function

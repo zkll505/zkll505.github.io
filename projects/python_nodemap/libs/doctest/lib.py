@@ -3,7 +3,7 @@ import doctest
 
 
 def _run(mod):
-    text = mod.__file__.endswith(".txt")  # a text file (test_klondike.txt) is run as it is; a .py file is imported and its docstrings run
+    text = not mod.__file__.endswith(".py")  # a text file (test_klondike.txt) is run as it is; a .py file is imported and its docstrings run
     r = doctest.testfile(mod.__file__, module_relative=False, verbose=False) if text else doctest.testmod(mod, verbose=False)
     print(f"doctest: {r.attempted} run, {r.failed} failed" if r.attempted else f"doctest: no >>> examples found in {'the file' if text else 'docstrings'}")
 

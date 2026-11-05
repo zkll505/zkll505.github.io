@@ -91,7 +91,7 @@ tests.
 
 ## Details
 
-Names in a list are separated by spaces or commas. Case and spacing don't matter (`# No Copy/Paste` works); a comment line that isn't one
+Names in a list are separated by spaces or commas; `# hide` and `# read only` can name a folder, which covers everything in it. Case and spacing don't matter (`# No Copy/Paste` works); a comment line that isn't one
 of these is ignored, so you can write notes in the file too. Changes apply as soon as the file changes.
 
 ## What this is not
