@@ -17,7 +17,7 @@ const PYODIDE_SIZES = { 'pyodide.asm.wasm': 8647684, 'python_stdlib.zip': 242400
 let ready = false; // Python finished loading
 const STOPPED = new Error('stopped'); // what a pending worker call rejects with when Stop kills the worker (not an error to show)
 
-// the project a first-time visitor starts with: a function, a class, a loop, an if/else, an import of a second file and a doctest
+// the project a first-time visitor starts with: a function, a class, a loop, an if/else, an import of a second file, a file read from a folder and a doctest
 const STARTER = {
   'main.py': `import random
 from helpers import average
@@ -56,6 +56,10 @@ print(rex.show())
 scores = [random.randint(50, 100) for _ in range(5)]
 print("average:", average(scores))
 
+with open("data/scores.txt") as file:
+    saved = [int(line) for line in file]
+print("saved average:", average(saved))
+
 if total > 10:
     print("big")
 else:
@@ -72,6 +76,10 @@ if __name__ == "__main__":
     3.0
     """
     return sum(nums) / len(nums)
+`,
+  'data/scores.txt': `72
+85
+91
 `,
   // for teachers: how to use the tool with a class (locked; the password is "teach", see the README)
   'education.py': `# pynodemap lock teach
