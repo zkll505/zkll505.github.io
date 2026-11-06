@@ -208,11 +208,12 @@
             <span id="libs"></span>
         </footer>
 
-        <!-- asks for the password of a locked file (see app.js: unlock) -->
+        <!-- asks for the password of a locked file (see app.js: unlock). Masked by style.css, not type="password": browsers ignore
+             autocomplete="off" on a real password field and offer to save it, with text typed in the console as the login name -->
         <dialog id="pw">
             <form id="pw-form" method="dialog">
                 <p><b id="pw-name"></b> is locked. Enter its password to open it.</p>
-                <input id="pw-in" type="password" autocomplete="off" spellcheck="false" aria-label="Password" />
+                <input id="pw-in" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Password" />
                 <p id="pw-err" role="alert" hidden>That is not the password.</p>
                 <div class="pw-buttons">
                     <button type="button" id="pw-cancel">Cancel</button>

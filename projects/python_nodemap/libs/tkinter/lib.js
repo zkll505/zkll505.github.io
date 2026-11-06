@@ -128,7 +128,8 @@
       switch (t) {
         case 'label': case 'message': e.textContent = o.text ?? ''; break;
         case 'button': e.textContent = o.text ?? ''; e.disabled = dis; break;
-        case 'entry': e.type = o.show ? 'password' : 'text'; e.readOnly = o.state === 'readonly'; e.disabled = dis; setValue(e, n, n.v); break;
+        // (show="*" masks by style, not type="password", which would make the browser offer to save it: see index.html's password dialog)
+        case 'entry': e.style.setProperty('-webkit-text-security', o.show ? 'disc' : ''); e.readOnly = o.state === 'readonly'; e.disabled = dis; setValue(e, n, n.v); break;
         case 'text': e.cols = o.width ?? 80; e.rows = o.height ?? 24; e.wrap = o.wrap === 'none' ? 'off' : 'soft'; e.disabled = dis; setValue(e, n, n.v); break;
         case 'checkbutton': case 'radiobutton':
           e._tx.textContent = o.text ?? ''; e._in.checked = !!n.c; e._in.disabled = dis;

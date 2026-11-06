@@ -44,7 +44,7 @@ dialog#guide::backdrop { background: rgba(0, 0, 0, .5); }
 #imp-note { margin: 10px 0 0; color: var(--dim); }
 #imp-note:empty { display: none; }
 #pw p { margin: 0 0 10px; }
-#pw input { width: 100%; }
+#pw input { width: 100%; -webkit-text-security: disc; } /* masked without type="password", see index.html */
 #pw #pw-err { color: #f48771; margin: 8px 0 0; }
 body.light #pw #pw-err { color: #cd3131; }
 .pw-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
