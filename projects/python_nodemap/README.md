@@ -127,6 +127,8 @@ Other things worth knowing:
 | Ctrl+/ | Comment or uncomment the selected lines |
 | Ctrl+Q, or ▾ in the gutter | Fold or unfold the indented block under a line (`class Dog:`, a `def`, a loop) |
 | Tab · Shift+Tab | Indent · outdent |
+| Alt+↑ / ↓ | Move the line (or the selected lines) up / down |
+| Shift+Alt+↑ / ↓ | Duplicate the line (or the selected lines) above / below |
 | Ctrl+mouse wheel over the map | Zoom the map |
 | Enter in "Find variable…" | Jump to the next matching node |
 

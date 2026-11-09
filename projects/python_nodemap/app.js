@@ -614,6 +614,19 @@ IN.onkeydown = e => {
 
 // ---- editor
 const complete = c => c.showHint({ hint: cc => PyComplete.hint(cc, visibleFiles()), completeSingle: false });
+// Shift+Alt+Up / Down, as in VS Code: copy the lines the selection touches (a selection ending at the start of a line leaves that line
+// out) and keep the selection on the upper copy (Up) or move it to the lower one (Down)
+function copyLines(c, down) {
+  if (c.isReadOnly()) return CodeMirror.Pass;
+  const { anchor: a, head: h } = c.listSelections()[0], from = Math.min(a.line, h.line);
+  const end = a.line > h.line || (a.line === h.line && a.ch > h.ch) ? a : h;
+  const to = end.line > from && end.ch === 0 ? end.line - 1 : end.line, n = down ? to - from + 1 : 0;
+  c.operation(() => {
+    c.replaceRange(c.getRange({ line: from, ch: 0 }, { line: to }) + '\n', { line: from, ch: 0 }, null, '+copyLines');
+    c.setSelection({ line: a.line + n, ch: a.ch }, { line: h.line + n, ch: h.ch });
+    c.scrollIntoView();
+  });
+}
 const cm = CodeMirror($('#cm'), {
   // folding by indentation: the ▾ beside a line that has an indented block under it (class Dog:, def, for ...) folds that block
   foldGutter: { rangeFinder: CodeMirror.fold.indent }, foldOptions: { rangeFinder: CodeMirror.fold.indent, widget: ' ⋯ ' },
@@ -623,6 +636,8 @@ const cm = CodeMirror($('#cm'), {
     Tab: c => (c.somethingSelected() ? c.indentSelection('add') : c.replaceSelection('    ', 'end')),
     'Shift-Tab': 'indentLess', 'Ctrl-/': 'toggleComment', 'Ctrl-Enter': () => run(), F5: () => run(), 'Ctrl-S': () => {},
     'Ctrl-Q': c => c.foldCode(c.getCursor()), // fold / unfold the block the cursor's line starts
+    'Alt-Up': 'swapLineUp', 'Alt-Down': 'swapLineDown', // move the line, or the selected lines (keymap/sublime.js)
+    'Shift-Alt-Up': c => copyLines(c, false), 'Shift-Alt-Down': c => copyLines(c, true),
     'Ctrl-Space': complete, 'Ctrl-F': () => openFind(false), 'Ctrl-H': () => openFind(true), F3: () => findStep(1), 'Shift-F3': () => findStep(-1),
     Esc: () => (findOpen() ? closeFind() : CodeMirror.Pass),
   },
