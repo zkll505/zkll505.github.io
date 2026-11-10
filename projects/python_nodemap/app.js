@@ -128,6 +128,8 @@ if __name__ == "__main__":
 #   # grade_verbose: true  Grade also shows each failing test's code and what went wrong (default: descriptions only)
 #   # hide a.py b.txt      those files are not listed at all and can't be opened; they still run and import
 #   # read only data.txt   those files open but can't be changed, renamed or deleted
+#   # whitelist-libs: math random   students may import only these libraries (the status bar lists just them); hidden
+#                          files and the grade tests may still import any, so tests that use unittest keep working
 #
 # ----------------------------------------------------------------------------------------------------------------
 #   TEACHER MODE
@@ -192,6 +194,7 @@ if __name__ == "__main__":
 #   example: # grade_verbose: true
 #   example: # hide gradeuser.py
 #   example: # read only data.txt
+#   example: # whitelist-libs: math random
 `,
   'grade_helpers.txt': `# pynodemap lock teach
 Doctest grading for helpers.py, the Python Nodemap sample (hidden and locked with "teach").
@@ -309,15 +312,17 @@ const lockOf = n => { const m = LOCK.exec(S.files[n] ?? ''); return m ? m[1] : n
 //   # grade_verbose: true     Grade shows the code of each failing test and what went wrong (false: only the tests' descriptions)
 //   # hide a.py notes.txt     those files don't show up at all; they still run and can be imported (like locked files)
 //   # read only data.txt      those files open but can't be changed
+//   # whitelist-libs: math random   the student's code may import only these libraries (the status bar lists just them); the files
+//                             the settings name as the teacher's (hidden files, the grade tests, this file) may import any
 const SETTINGS = 'pynodesettings.py', PASTES = 'paste_log.txt';
 const cfg = (() => { // the parsed settings, re-read whenever the settings file changes
   let src = null, val = null;
   return () => {
     if (S.files[SETTINGS] === src && val) return val;
     src = S.files[SETTINGS];
-    val = { nocopy: false, pastes: false, grades: [], selfgrade: false, verbose: false, hide: new Set(), readonly: new Set() };
+    val = { nocopy: false, pastes: false, grades: [], selfgrade: false, verbose: false, hide: new Set(), readonly: new Set(), libs: null };
     for (const line of (src || '').split('\n')) {
-      const m = /^\s*#\s*(no\s*copy\s*(?:\/|,|and|&)?\s*paste|track\s+pastes?|paste\s+tracking|self[\s_]*grade|grade[\s_]*verbose|grade|hide|hidden|read\s*only)\b\s*(.*?)\s*$/i.exec(line);
+      const m = /^\s*#\s*(no\s*copy\s*(?:\/|,|and|&)?\s*paste|track\s+pastes?|paste\s+tracking|self[\s_]*grade|grade[\s_]*verbose|grade|hide|hidden|read\s*only|white[\s_-]*list[\s_-]*libs?)\b\s*(.*?)\s*$/i.exec(line);
       if (!m) continue;
       const key = m[1].toLowerCase().replace(/[\s_]+/g, ''), rest = m[2].replace(/^[:=]\s*/, ''), names = rest.split(/[\s,]+/).filter(Boolean);
       const yes = !/^(false|no|off|0)$/i.test(rest); // a yes / no setting: `# self grade: true` (a bare `# self grade` means yes too)
@@ -327,6 +332,7 @@ const cfg = (() => { // the parsed settings, re-read whenever the settings file 
       else if (key === 'gradeverbose') val.verbose = yes;
       else if (key === 'grade' && names.length) val.grades.push(names.length > 1 ? { student: names[0], tests: names[1] } : { student: null, tests: names[0] });
       else if (key === 'hide' || key === 'hidden') names.forEach(n => val.hide.add(n));
+      else if (key.startsWith('white')) val.libs = new Set([...(val.libs || []), ...names]); // (a line listing none: no libraries)
       else names.forEach(n => val.readonly.add(n));
     }
     if (val.pastes) val.readonly.add(PASTES);
@@ -343,6 +349,14 @@ const isReadOnly = n => listed(cfg().readonly, n);
 const isLocked = n => isHidden(n) || (lockOf(n) !== null && !S.unlocked.has(n));
 // files an import must not overwrite: locked, hidden or read only (the paste log among them)
 const isProtected = n => isLocked(n) || isReadOnly(n);
+// `# whitelist-libs: math random`: the libraries the student's code may import (null: no such line, so all of them). The files the
+// settings name as the teacher's may import any: hidden files, the tests of the grade lines (gradeuser.py when there are none) and the
+// settings file. A file of the student's own, even a locked one, is never one of them.
+const onlyLibs = () => cfg().libs && PyLibs.names().filter(l => cfg().libs.has(l));
+const teacherFile = n => n === SETTINGS || listed(cfg().hide, n) || (cfg().grades.length ? cfg().grades.some(g => g.tests === n) : n === 'gradeuser.py');
+const libsFor = n => (n && teacherFile(n) ? null : onlyLibs()); // what file n may import (null: everything)
+// the run options runner.py's import check reads: "only" for the program started from file `main`, "free" = the teacher's modules
+const libLimits = main => ({ only: libsFor(main), free: Object.keys(S.files).filter(n => isPy(n) && teacherFile(n)).map(n => n.slice(0, -3).replace(/\//g, '.')) });
 const firstOpenable = skip => Object.keys(S.files).sort().find(n => n !== skip && !isDir(n) && !isLocked(n));
 // the files as autocomplete may see them: a locked file's names stay secret
 const visibleFiles = () => Object.fromEntries(Object.entries(S.files).filter(([n]) => isPy(n) && !isHidden(n)).map(([n, s]) => [n, isLocked(n) ? '' : s]));
@@ -573,7 +587,7 @@ async function shellLine(v) {
   pyBusy = true;
   let res = null;
   try {
-    res = JSON.parse(await W.call('shell', { src, files: S.files, locked: Object.keys(S.files).filter(isLocked), mailbox: mailboxUrl() }));
+    res = JSON.parse(await W.call('shell', { src, files: S.files, locked: Object.keys(S.files).filter(isLocked), mailbox: mailboxUrl(), opts: libLimits(null) }));
   } catch (e) {
     if (e === STOPPED) return;
     out(String(e.message || e) + '\n', 'err');
@@ -613,7 +627,7 @@ IN.onkeydown = e => {
 };
 
 // ---- editor
-const complete = c => c.showHint({ hint: cc => PyComplete.hint(cc, visibleFiles()), completeSingle: false });
+const complete = c => c.showHint({ hint: cc => PyComplete.hint(cc, visibleFiles(), libsFor(S.active)), completeSingle: false });
 // Shift+Alt+Up / Down, as in VS Code: copy the lines the selection touches (a selection ending at the start of a line leaves that line
 // out) and keep the selection on the upper copy (Up) or move it to the lower one (Down)
 function copyLines(c, down) {
@@ -786,6 +800,7 @@ function chrome() { // re-render the tab strip, the explorer list and the map's 
   $('#mapname').textContent = '· ' + S.active;
   $('#edu').hidden = S.active !== SETTINGS; // (you can only be viewing it if it is unlocked)
   $('#grade').hidden = S.active !== SETTINGS && !cfg().selfgrade; // `# self grade: true` puts it on every file
+  $('#libs').textContent = 'Python · ' + ((onlyLibs() || PyLibs.names()).join(', ') || 'no libraries'); // (`# whitelist-libs`: just those)
 }
 // remove every trace of file n (its text, document and cached results)
 const forget = n => [S.files, docs, S.trace, S.graph, S.key, S.err, S.hints, S.fold].forEach(o => delete o[n]);
@@ -1073,11 +1088,11 @@ let act = null, hov = null; // node under the cursor / under the mouse
 // Re-analyse the active file if it (or the list of project files) changed since the last analysis, then redraw the map and the hints.
 // S.key[file] = what the cached S.graph[file] was computed from. Stale answers (the file changed while we waited) are dropped.
 async function refresh() {
-  const n = S.active, src = S.files[n], key = src + '\0' + modsOf();
+  const n = S.active, src = S.files[n], only = libsFor(n), key = src + '\0' + modsOf() + '\0' + only;
   if (!isPy(n)) { $('#maperr').textContent = ''; draw(); showHints(); return; } // a text file: nothing to analyse
   if (S.key[n] !== key) {
     let g;
-    try { g = JSON.parse(await W.call('analyze', { src, mods: modsOf() })); } catch { return; }
+    try { g = JSON.parse(await W.call('analyze', { src, mods: modsOf(), only })); } catch { return; }
     if (n !== S.active || src !== S.files[n]) return; // edited or switched while we waited
     S.key[n] = key;
     if (g.error) {
@@ -1279,6 +1294,8 @@ async function run(mode = 'run', cover = false, opts = {}) { // mode = 'run', or
   const main = opts.main || S.active;
   // (a verbose grade shows the tests' code, so the test file is not kept locked for that run: its source has to be there to show)
   const locked = Object.keys(S.files).filter(n => isLocked(n) && !(opts.verbose && opts.grades?.some(g => g[1] === n)));
+  // (Grade starts from the settings file, but what it runs is the student's code: limited like any student file)
+  opts = { ...opts, ...libLimits(mode === 'grade' ? null : main) };
   job = { files: { ...S.files }, main, mode, cover, opts, answers: [], seed: Math.floor(Math.random() * 2 ** 31), locked };
   S.ranFiles = { ...S.files };
   clearOut();
@@ -1502,7 +1519,7 @@ $('#exp').onclick = async () => { // a zip with every file and, for each .py, a 
     zip.file(name, src);
     if (!isPy(name) || isLocked(name)) continue;
     try {
-      const g = JSON.parse(await W.call('analyze', { src, mods: modsOf() }));
+      const g = JSON.parse(await W.call('analyze', { src, mods: modsOf(), only: libsFor(name) }));
       if (!g.error) zip.file(name.replace(/\.py$/, '') + '_nodemap.png', await NodeMap.png(g, S.trace[name], { light: P.light }));
     } catch {}
   }
@@ -1611,7 +1628,6 @@ drag($('#vsplit'), e => document.body.style.setProperty('--map-w', Math.max(240,
 drag($('#hsplit'), e => document.body.style.setProperty('--con-h', Math.max(60, innerHeight - 22 - e.clientY) + 'px'));
 
 // ---- go
-$('#libs').textContent = 'Python · ' + PyLibs.names().join(', ');
 cm.swapDoc(docOf(S.active));
 foldLockLines(cm.getDoc());
 cm.setOption('readOnly', isReadOnly(S.active));

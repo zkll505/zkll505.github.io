@@ -7,10 +7,10 @@ const PyComplete = (() => {
   const top = src => [...src.matchAll(/^(?:def|class)\s+(\w+)|^(\w+)\s*=(?!=)/gm)].map(m => m[1] || m[2]);
   const methodsOf = src => [...src.matchAll(/^\s+def\s+(\w+)\s*\(\s*self/gm)].map(m => m[1]);
 
-  /** CodeMirror hint function. files = { 'name.py': source } */
-  function hint(cm, files) {
+  /** CodeMirror hint function. files = { 'name.py': source }; libs = the libraries this file may import (null: all registered ones) */
+  function hint(cm, files, libs) {
     const cur = cm.getCursor(), line = cm.getLine(cur.line).slice(0, cur.ch);
-    const MOD = PyLibs.members(), importable = PyLibs.names();
+    const MOD = PyLibs.members(), importable = libs || PyLibs.names();
     const proj = Object.fromEntries(Object.entries(files).map(([n, s]) => [n.replace(/\.py$/, '').replace(/\//g, '.'), s]));
     const alias = {};
     for (const a of cm.getValue().matchAll(/^\s*(?:import\s+([\w.]+)\s+as\s+(\w+)|from\s+(\w+)\s+import\s+(\w+)\s+as\s+(\w+))/gm)) {

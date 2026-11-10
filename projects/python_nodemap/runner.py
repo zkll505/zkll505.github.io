@@ -142,12 +142,14 @@ def scan(exprs, me, methods, modules=()):
     return list(uses), list(defs), calls, changed - stored
 
 
-def analyze(src, mods_json="[]"):
+def analyze(src, mods_json="[]", only_json="null"):
     """Static analysis of one file -> JSON {nodes, wires, hints}, or {error, line, msg} for a syntax error.
-    mods_json = names of the project's other files (importable, so `import helpers` is not flagged).
+    mods_json = names of the project's other files (importable, so `import helpers` is not flagged); only_json = the libraries this
+    file may import (null: every registered one; see allowed_libs).
     Steps: 1) visit() turns every statement into a node and records which node defines which name; 2) sources() resolves each
     use of a name to the node(s) that defined it, which gives the wires; 3) the hints that need those tables are added last."""
     mods = set(json.loads(mods_json))  # names of the project's other files (importable)
+    libs = allowed_libs(json.loads(only_json))
     try:
         tree = ast.parse(src)
     except SyntaxError as e:
@@ -194,8 +196,8 @@ def analyze(src, mods_json="[]"):
         if t in (ast.Import, ast.ImportFrom):
             tops = [a.name.split(".")[0] for a in s.names] if t is ast.Import else [] if s.level else [(s.module or "").split(".")[0]]
             for top in tops:
-                if top not in ALLOWED and top not in mods:
-                    hint(s.lineno, f"'{top}' isn't available here. You can import: " + ", ".join(ALLOWED + tuple(sorted(mods))), "error")
+                if top not in libs and top not in mods:
+                    hint(s.lineno, f"'{top}' isn't available here. You can import: " + ", ".join(libs + tuple(sorted(mods))), "error")
         elif t is ast.Expr and isinstance(s.value, (ast.Name, ast.Attribute)):
             hint(s.lineno, f"'{ast.unparse(s.value)}' on its own does nothing. To call a function add (), to show a value use print().")
         elif t is ast.Expr and isinstance(s.value, ast.Compare):
@@ -486,6 +488,11 @@ def configure(allowed_json):
     ALLOWED = tuple(json.loads(allowed_json))
 
 
+def allowed_libs(only):
+    """pynodesettings.py `# whitelist-libs: math random`: the registered libraries the student's code may import (only = None: all)."""
+    return ALLOWED if only is None else tuple(lib for lib in ALLOWED if lib in only)
+
+
 def load_lib(name, src):
     """Run a library's lib.py once, at start-up (docs/ADDING_A_LIBRARY.md). Picks up the names it may define: install(),
     run_modes (-> MODES) and gui_hooks (-> GUI). Its frames are hidden from students' tracebacks (the "<lib name>" filename)."""
@@ -557,10 +564,10 @@ def shell_cleanup():
         _SHELL.clear()
 
 
-def shell(src, files_json="{}", locked_json="[]", mailbox_url=""):
+def shell(src, files_json="{}", locked_json="[]", mailbox_url="", opts_json="{}"):
     """One entry typed at the console's >>> prompt, run like Python's own REPL (an expression's value is printed) in the globals of the
     module the last run ran, inside the same sandbox, so `list(Rank)` works after running klondike.py. With no run yet, an empty program
-    is run first to set the sandbox up. JSON {more, files}: more = the code isn't complete yet (the page shows "... " and sends it again
+    is run first to set the sandbox up, with the run options opts_json (the import limits). JSON {more, files}: more = the code isn't complete yet (the page shows "... " and sends it again
     with the next line); files = the traces, which calls into the project's functions keep updating."""
     try:
         code = codeop.compile_command(src, "<console>", "single")
@@ -571,7 +578,7 @@ def shell(src, files_json="{}", locked_json="[]", mailbox_url=""):
         return json.dumps({"more": True})
     if not _SHELL:
         files = {**json.loads(files_json), "__console__.py": ""}
-        run(json.dumps(files), "__console__.py", "run", "[]", random.randrange(2 ** 31), mailbox_url, locked_json)
+        run(json.dumps(files), "__console__.py", "run", "[]", random.randrange(2 ** 31), mailbox_url, locked_json, opts_json)
     _MAIL.update(url=mailbox_url, ok=True)
     sh = _SHELL
     sh["reset"]()
@@ -757,6 +764,9 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
         return local
 
     user = loaded | {"__main__"}
+    # `# whitelist-libs`: the libraries the student's modules may import (the page's option "only"), while the teacher's modules
+    # (option "free": hidden files, the grade tests) may import any. Kept here, so the >>> prompt after this run gets the same limits.
+    limited, free = allowed_libs(_OPTS.get("only")), set(_OPTS.get("free", ()))
     real_import, real_input = builtins.__import__, builtins.input
 
     def guard(name, globals=None, locals=None, fromlist=(), level=0):  # replaces __import__ while the program runs
@@ -764,9 +774,10 @@ def run(files_json, main, mode="run", answers_json="[]", seed=0, mailbox_url="",
         # own code isn't (encoding="utf8" makes the encodings package import its codec this way)
         caller = sys._getframe(1).f_globals if globals is None else globals
         if level == 0 and caller.get("__name__") in user:
-            top = name.split(".")[0]
-            if top not in ALLOWED and top not in mods and top != "__main__":  # unittest.main() imports __main__
-                raise ImportError(f"'{top}' isn't available here. You can import: " + ", ".join(ALLOWED + tuple(sorted(dotted - {main[:-3].replace("/", ".")}))))
+            top, libs = name.split(".")[0], ALLOWED if caller.get("__name__") in free else limited
+            if top not in libs and top not in mods and top != "__main__":  # unittest.main() imports __main__
+                # (the project's files it lists leave out the locked ones: a student isn't told the names of hidden test files)
+                raise ImportError(f"'{top}' isn't available here. You can import: " + ", ".join(libs + tuple(sorted(dotted - set(hidden) - {main[:-3].replace("/", ".")}))))
         return real_import(name, globals, locals, fromlist, level)
 
     def ui_input(msg=""):  # replaces input(): waits for the answer typed in the console (ask), or re-runs with the answers so far

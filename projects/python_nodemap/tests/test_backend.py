@@ -977,6 +977,39 @@ def console_shell():
     assert "NameError" in sh("x")[2] and sh("y")[1] == "5\n", "a new run starts a new namespace"
 
 
+def whitelist_libs():
+    """pynodesettings.py `# whitelist-libs: math random`: the page passes the option "only" (what the student's code may import) and
+    "free" (the teacher's modules, which may import any library). Hints, runs and the >>> prompt all keep to it."""
+    lim = {"only": ["math", "random"], "free": ["gradeuser"]}
+
+    def go(files, main="main.py", mode="run", opts=lim):
+        with contextlib.redirect_stdout(io.StringIO()) as o, contextlib.redirect_stderr(io.StringIO()) as e:
+            r = json.loads(runner.run(json.dumps(files), main, mode, "[]", 0, "", "[]", json.dumps(opts)))
+        return r, o.getvalue() + e.getvalue()
+
+    r, out = go({"main.py": "import math\nfrom random import randint\nprint(math.floor(2.5))\n"})
+    assert r["error"] is None and out == "2\n", out
+    r, out = go({"main.py": "import helpers\nimport time\n", "helpers.py": ""})  # (the project's own files are always fine)
+    assert r["error"]["line"] == 2 and "'time' isn't available here. You can import: random, math, helpers" in out, out
+    r, out = go({"main.py": "import helpers\n", "helpers.py": "import turtle\n"})  # the student's other files too
+    assert "'turtle' isn't available here" in out, out
+    r, out = go({"main.py": "import time\n"}, opts={})  # no whitelist: every library
+    assert r["error"] is None, out
+    tests = "import unittest\nimport main\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(main.x, 1)\n"
+    r, out = go({"main.py": "x = 1\n", "gradeuser.py": tests}, mode="grade", opts={**lim, "grade": "gradeuser.py"})
+    assert out.startswith("Grade: 100%"), out  # the tests may import unittest...
+    r, out = go({"main.py": "import time\nx = 1\n", "gradeuser.py": tests}, "main.py", "grade", {**lim, "grade": "gradeuser.py"})
+    assert "'time' isn't available here" in out and "Grade: 100%" not in out, out  # ...the student's code, graded, may not
+    hints = json.loads(runner.analyze("import time\nimport math\n", "[]", json.dumps(["math"])))["hints"]
+    assert [h["line"] for h in hints if "isn't available" in h["msg"]] == [1], hints  # the editor's hint, too
+    assert not [h for h in json.loads(runner.analyze("import time\n"))["hints"] if "isn't available" in h["msg"]]
+    runner.shell_cleanup()  # a fresh page: the >>> prompt keeps to it as well
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as e:
+        runner.shell("import time", "{}", "[]", "", json.dumps(lim))
+    assert "'time' isn't available here" in e.getvalue(), e.getvalue()
+    runner.shell_cleanup()
+
+
 def grade_mode():
     """pynodesettings.py `# grade <file>`: the 'grade' mode runs that file's tests against the student's module and prints only the score
     (a locked test file is served from memory, so its source never shows)."""
@@ -1079,4 +1112,5 @@ if __name__ == "__main__":
     console_shell()
     grade_mode()
     enum_and_unittest()
+    whitelist_libs()
     print("ok")

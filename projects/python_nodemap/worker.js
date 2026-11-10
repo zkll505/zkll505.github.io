@@ -74,14 +74,14 @@ function workerMain() {
         api.configure(JSON.stringify(m.allowed));
         for (const l of m.libs) api.load_lib(l.name, l.src); // in the order the libraries were registered
       } else if (m.type === 'analyze') {
-        result = api.analyze(m.src, JSON.stringify(m.mods));
+        result = api.analyze(m.src, JSON.stringify(m.mods), JSON.stringify(m.only ?? null));
       } else if (m.type === 'run') {
         closeWindows(); // the previous program's windows must not outlive this run (also covers a tree already in flight)
         result = api.run(JSON.stringify(m.files), m.main, m.mode, JSON.stringify(m.answers), m.seed, m.mailbox || '', JSON.stringify(m.locked || []), JSON.stringify(m.opts || {}));
         flush();
         libs().forEach(lib => guiReply(api.gui_pump(lib))); // a window left open by mainloop(): start its timers
       } else if (m.type === 'shell') { // a line typed at the console's >>> prompt
-        result = api.shell(m.src, JSON.stringify(m.files), JSON.stringify(m.locked || []), m.mailbox || '');
+        result = api.shell(m.src, JSON.stringify(m.files), JSON.stringify(m.locked || []), m.mailbox || '', JSON.stringify(m.opts || {}));
         flush();
         libs().forEach(lib => guiReply(api.gui_pump(lib)));
       }
